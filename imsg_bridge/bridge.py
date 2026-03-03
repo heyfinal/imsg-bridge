@@ -92,7 +92,11 @@ class SendRequest(BaseModel):
 
 def load_state() -> dict:
     if STATE_FILE.exists():
-        return json.loads(STATE_FILE.read_text())
+        try:
+            return json.loads(STATE_FILE.read_text())
+        except (json.JSONDecodeError, ValueError) as exc:
+            logger.warning("Corrupt state.json, resetting: %s", exc)
+            STATE_FILE.rename(STATE_FILE.with_suffix(".bad"))
     return {}
 
 
@@ -216,6 +220,8 @@ class SubprocessManager:
             stderr=asyncio.subprocess.PIPE,
         )
 
+        stderr_task = asyncio.create_task(self._drain_stderr(self._proc.stderr))
+
         async for line in self._proc.stdout:
             if self._stop_event.is_set():
                 break
@@ -235,11 +241,19 @@ class SubprocessManager:
             await self._broadcast(text)
 
         rc = await self._proc.wait()
+        stderr_out = await stderr_task
         if rc != 0 and not self._stop_event.is_set():
-            stderr_out = ""
-            if self._proc.stderr:
-                stderr_out = (await self._proc.stderr.read()).decode().strip()
             raise RuntimeError(f"Watch exited with code {rc}: {stderr_out}")
+
+    @staticmethod
+    async def _drain_stderr(stream) -> str:
+        chunks = []
+        async for line in stream:
+            text = line.decode().strip()
+            if text:
+                logger.warning("watch stderr: %s", text)
+                chunks.append(text)
+        return "\n".join(chunks)
 
 
 # --- App ---
@@ -280,8 +294,9 @@ async def list_chats() -> list[Chat]:
 @app.get("/history/{chat_id}", dependencies=[Depends(verify_token)])
 async def message_history(chat_id: int, limit: int = Query(default=50, ge=1)) -> list[Message]:
     data = await run_imsg("history", "--chat-id", str(chat_id), "--json")
-    if isinstance(data, list):
-        data = data[:limit]
+    if isinstance(data, dict):
+        data = [data]
+    data = data[:limit]
     return [Message(**m) for m in data]
 
 

@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 
 DEFAULTS = {
-    "host": "192.168.1.232",
+    "host": "127.0.0.1",
     "port": 5100,
     "token": "",
 }

@@ -8,8 +8,8 @@ BRIDGE_DIR="$HOME/.imessage-bridge"
 LOG_DIR="$HOME/Library/Logs"
 SERVICE_LABEL="com.imsg-bridge"
 CURRENT_USER="$(whoami)"
-BIND_HOST="0.0.0.0"
-BIND_PORT="5100"
+BIND_HOST="${IMSG_BIND_HOST:-127.0.0.1}"
+BIND_PORT="${IMSG_BIND_PORT:-5100}"
 
 BOLD="\033[1m"
 DIM="\033[2m"
@@ -151,6 +151,27 @@ do_setup() {
     echo ""
     echo -e "  ${BOLD}$TOKEN${RESET}"
     echo ""
+
+    # Ask about LAN binding if not set via env
+    if [[ -z "${IMSG_BIND_HOST:-}" ]]; then
+        echo -e "${BOLD}Network binding:${RESET}"
+        echo ""
+        echo -e "  ${BOLD}1)${RESET} Localhost only  ${DIM}(127.0.0.1 — secure, local access only)${RESET}"
+        echo -e "  ${BOLD}2)${RESET} LAN accessible  ${DIM}(0.0.0.0 — required for Linux client)${RESET}"
+        echo ""
+        read -rp "Choice [1/2]: " bind_choice
+        case "$bind_choice" in
+            2)
+                BIND_HOST="0.0.0.0"
+                echo -e "Binding to ${CYAN}0.0.0.0:${BIND_PORT}${RESET} (LAN accessible)"
+                ;;
+            *)
+                BIND_HOST="127.0.0.1"
+                echo -e "Binding to ${CYAN}127.0.0.1:${BIND_PORT}${RESET} (localhost only)"
+                ;;
+        esac
+        echo ""
+    fi
 
     mkdir -p "$BRIDGE_DIR"
     mkdir -p "$LOG_DIR"
