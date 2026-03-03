@@ -47,25 +47,166 @@ get_token() {
     security find-generic-password -a "$CURRENT_USER" -s imessage-bridge -w 2>/dev/null || true
 }
 
-check_chatdb_access() {
-    if [[ ! -x "$IMSG_BIN" ]]; then
-        return
-    fi
-
+probe_chatdb_access() {
+    local probe_err_var="${1:-}"
     local probe_err=""
     local probe_rc=0
+
+    if [[ ! -x "$IMSG_BIN" ]]; then
+        [[ -n "$probe_err_var" ]] && printf -v "$probe_err_var" ""
+        return 0
+    fi
+
     set +e
     probe_err=$("$IMSG_BIN" chats --json 2>&1 >/dev/null)
     probe_rc=$?
     set -e
 
-    if [[ $probe_rc -ne 0 ]] && echo "$probe_err" | grep -qi "permissionDenied"; then
+    if [[ -n "$probe_err_var" ]]; then
+        printf -v "$probe_err_var" "%s" "$probe_err"
+    fi
+
+    if [[ $probe_rc -eq 0 ]]; then
+        return 0
+    fi
+
+    if echo "$probe_err" | grep -qi "permissionDenied"; then
+        return 2
+    fi
+
+    return 1
+}
+
+service_recent_permission_denied() {
+    local err_log="$LOG_DIR/imessage-bridge.err"
+    if [[ ! -f "$err_log" ]]; then
+        return 1
+    fi
+
+    tail -n 120 "$err_log" | grep -qi "permissionDenied(path: .*Library/Messages/chat.db"
+}
+
+open_full_disk_access_settings() {
+    local opened=1
+    local urls=(
+        "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_AllFiles"
+        "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles"
+        "x-apple.systempreferences:com.apple.preference.security?Privacy"
+    )
+
+    if command -v open &>/dev/null; then
+        local url
+        for url in "${urls[@]}"; do
+            if open "$url" >/dev/null 2>&1; then
+                opened=0
+                break
+            fi
+        done
+    fi
+
+    if [[ $opened -ne 0 ]] && command -v osascript &>/dev/null; then
+        osascript >/dev/null 2>&1 <<'APPLESCRIPT'
+try
+    tell application "System Settings" to activate
+end try
+APPLESCRIPT
+    fi
+}
+
+print_full_disk_access_steps() {
+    echo ""
+    echo -e "${BOLD}Enable Full Disk Access (required)${RESET}"
+    echo "1) In System Settings, open: Privacy & Security > Full Disk Access"
+    echo "2) Unlock changes (click the lock, use password/Touch ID)"
+    echo "3) Enable your terminal app (Terminal / iTerm / Warp)"
+    if [[ -x "$PYTHON" ]]; then
+        echo "4) Add and enable Python used by the bridge:"
+        echo "   $PYTHON"
+    fi
+    if [[ -x "$IMSG_BIN" ]]; then
+        echo "5) Ensure imsg is enabled too (if listed):"
+        echo "   $IMSG_BIN"
+    fi
+    echo "6) Return here and press Enter to re-check"
+    echo ""
+}
+
+guide_full_disk_access() {
+    local choice recheck
+
+    echo ""
+    read -rp "Open Full Disk Access settings now? [Y/n]: " choice
+    if [[ ! "$choice" =~ ^[Nn]$ ]]; then
+        open_full_disk_access_settings
+        if command -v open &>/dev/null; then
+            [[ -x "$PYTHON" ]] && open -R "$PYTHON" >/dev/null 2>&1 || true
+            [[ -x "$IMSG_BIN" ]] && open -R "$IMSG_BIN" >/dev/null 2>&1 || true
+        fi
+    fi
+
+    print_full_disk_access_steps
+    read -rp "Press Enter to re-check, or type 'skip' to continue: " recheck
+    if [[ "$recheck" =~ ^[Ss][Kk][Ii][Pp]$ ]]; then
+        echo "Skipped Full Disk Access setup."
+        return
+    fi
+
+    local probe_err=""
+    local probe_result=0
+
+    launchctl kickstart -k "$GUI_DOMAIN/$SERVICE_LABEL" >/dev/null 2>&1 || true
+    sleep 2
+
+    probe_chatdb_access probe_err
+    probe_result=$?
+
+    if [[ $probe_result -eq 0 ]]; then
         echo ""
-        echo -e "${YELLOW}WARNING:${RESET} imsg cannot read Messages database (Full Disk Access missing)."
-        echo "Grant Full Disk Access to your terminal app and Python, then restart the agent:"
+        echo -e "${GREEN}Full Disk Access check passed.${RESET}"
+        return
+    fi
+
+    if [[ $probe_result -eq 2 ]] || service_recent_permission_denied; then
+        echo ""
+        echo -e "${YELLOW}Still blocked:${RESET} Full Disk Access has not been fully enabled yet."
+        echo "After enabling access, restart the agent with:"
         echo "  launchctl kickstart -k $GUI_DOMAIN/$SERVICE_LABEL"
         echo ""
+        return
     fi
+
+    echo ""
+    echo -e "${YELLOW}imsg probe still failing:${RESET}"
+    if [[ -n "$probe_err" ]]; then
+        echo "$probe_err" | sed -n '1,3p'
+    fi
+    echo "Check logs for details:"
+    echo "  tail -f ~/Library/Logs/imessage-bridge.err"
+    echo ""
+}
+
+check_chatdb_access() {
+    local probe_err=""
+    local probe_result=0
+    local needs_fda=0
+
+    probe_chatdb_access probe_err
+    probe_result=$?
+    if [[ $probe_result -eq 2 ]]; then
+        needs_fda=1
+    fi
+    if service_recent_permission_denied; then
+        needs_fda=1
+    fi
+
+    if [[ $needs_fda -eq 0 ]]; then
+        return
+    fi
+
+    echo ""
+    echo -e "${YELLOW}WARNING:${RESET} imsg cannot read Messages database from current runtime."
+    echo "The bridge needs Full Disk Access for Messages data."
+    guide_full_disk_access
 }
 
 generate_token() {

@@ -163,7 +163,8 @@ This will:
 4. Optionally deploy Linux client via:
    - LAN scan for SSH hosts (or manual IP entry) + username/password prompt
    - USB/external drive scan (or manual mount path)
-5. Verify the service is running
+5. If Messages DB access is blocked, automatically open Full Disk Access settings and walk you through enabling it
+6. Verify the service is running
 
 Logs are written to `~/Library/Logs/imessage-bridge.log` and `~/Library/Logs/imessage-bridge.err`.
 
