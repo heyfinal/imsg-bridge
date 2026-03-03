@@ -45,9 +45,9 @@ generate_token() {
     local token
     token=$(openssl rand -hex 32)
     if security find-generic-password -a "$CURRENT_USER" -s imessage-bridge &>/dev/null; then
-        security delete-generic-password -a "$CURRENT_USER" -s imessage-bridge
+        security delete-generic-password -a "$CURRENT_USER" -s imessage-bridge &>/dev/null
     fi
-    security add-generic-password -a "$CURRENT_USER" -s imessage-bridge -w "$token"
+    security add-generic-password -a "$CURRENT_USER" -s imessage-bridge -w "$token" &>/dev/null
     echo "$token"
 }
 
@@ -175,6 +175,18 @@ do_setup() {
 
     mkdir -p "$BRIDGE_DIR"
     mkdir -p "$LOG_DIR"
+
+    # Ensure dependencies are installed
+    if [[ ! -x "$SCRIPT_DIR/.venv/bin/python3" ]]; then
+        echo "Creating venv and installing dependencies..."
+        if command -v uv &>/dev/null; then
+            (cd "$SCRIPT_DIR" && uv sync)
+        else
+            python3 -m venv "$SCRIPT_DIR/.venv"
+            "$SCRIPT_DIR/.venv/bin/pip" install --quiet -e "$SCRIPT_DIR"
+        fi
+        PYTHON="$SCRIPT_DIR/.venv/bin/python3"
+    fi
 
     cat > "$PLIST_DEST" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
