@@ -25,6 +25,14 @@ dependencies = [
     "uvicorn>=0.41.0",
 ]
 
+[project.optional-dependencies]
+dev = [
+    "httpx>=0.28.0",
+    "pre-commit>=4.3.0",
+    "pytest>=8.3.0",
+    "ruff>=0.13.0",
+]
+
 [project.urls]
 Homepage = "https://github.com/heyfinal/imsg-bridge"
 Repository = "https://github.com/heyfinal/imsg-bridge"
@@ -39,3 +47,16 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["imsg_bridge"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]
+
+[tool.ruff.lint.per-file-ignores]
+"imsg_gtk/*.py" = ["E402"]

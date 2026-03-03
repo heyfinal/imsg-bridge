@@ -10,6 +10,7 @@ SERVICE_LABEL="com.imsg-bridge"
 CURRENT_USER="$(whoami)"
 BIND_HOST="${IMSG_BIND_HOST:-0.0.0.0}"
 BIND_PORT="${IMSG_BIND_PORT:-5100}"
+IMSG_BIN="/opt/homebrew/bin/imsg"
 
 BOLD="\033[1m"
 DIM="\033[2m"
@@ -46,6 +47,27 @@ get_token() {
     security find-generic-password -a "$CURRENT_USER" -s imessage-bridge -w 2>/dev/null || true
 }
 
+check_chatdb_access() {
+    if [[ ! -x "$IMSG_BIN" ]]; then
+        return
+    fi
+
+    local probe_err=""
+    local probe_rc=0
+    set +e
+    probe_err=$("$IMSG_BIN" chats --json 2>&1 >/dev/null)
+    probe_rc=$?
+    set -e
+
+    if [[ $probe_rc -ne 0 ]] && echo "$probe_err" | grep -qi "permissionDenied"; then
+        echo ""
+        echo -e "${YELLOW}WARNING:${RESET} imsg cannot read Messages database (Full Disk Access missing)."
+        echo "Grant Full Disk Access to your terminal app and Python, then restart the agent:"
+        echo "  launchctl kickstart -k $GUI_DOMAIN/$SERVICE_LABEL"
+        echo ""
+    fi
+}
+
 generate_token() {
     local token
     token=$(openssl rand -hex 32)
@@ -54,6 +76,201 @@ generate_token() {
     fi
     security add-generic-password -a "$CURRENT_USER" -s imessage-bridge -w "$token" &>/dev/null
     echo "$token"
+}
+
+scan_lan() {
+    SSH_HOSTS=()
+    local my_ip subnet tmp_dir
+    my_ip=$(get_lan_ip)
+    [[ -z "$my_ip" ]] && return
+
+    if ! command -v nc &>/dev/null; then
+        echo -e "  ${YELLOW}Skipping LAN scan: 'nc' is not installed.${RESET}"
+        return
+    fi
+
+    subnet="${my_ip%.*}"
+    tmp_dir=$(mktemp -d)
+
+    echo -e "  ${DIM}Scanning ${subnet}.0/24 for SSH hosts...${RESET}"
+
+    local i ip
+    for ((i=1; i<=254; i++)); do
+        ip="${subnet}.${i}"
+        [[ "$ip" == "$my_ip" ]] && continue
+        (nc -z -G 1 "$ip" 22 >/dev/null 2>&1 && echo "$ip" >> "$tmp_dir/ssh_hosts") &
+    done
+    wait
+
+    if [[ -f "$tmp_dir/ssh_hosts" ]]; then
+        while IFS= read -r ip; do
+            [[ -n "$ip" ]] && SSH_HOSTS+=("$ip")
+        done < <(sort -t. -k1,1n -k2,2n -k3,3n -k4,4n "$tmp_dir/ssh_hosts" | uniq)
+    fi
+
+    rm -rf "$tmp_dir"
+}
+
+scan_usb_drives() {
+    USB_DRIVES=()
+    USB_SIZES=()
+
+    local root_device
+    root_device=$(df / 2>/dev/null | awk 'NR==2 {print $1}')
+
+    local volumes=()
+    shopt -s nullglob
+    volumes=(/Volumes/*)
+    shopt -u nullglob
+
+    local vol name vol_device free_space info device_location protocol removable
+    for vol in "${volumes[@]}"; do
+        [[ -d "$vol" ]] || continue
+        name=$(basename "$vol")
+
+        # Skip system volumes
+        [[ "$name" == "Macintosh HD" ]] && continue
+        [[ "$name" == "Macintosh HD - Data" ]] && continue
+        [[ "$name" == "Recovery" ]] && continue
+        [[ "$name" == "Preboot" ]] && continue
+        [[ "$name" == "VM" ]] && continue
+        [[ "$name" == "Update" ]] && continue
+
+        vol_device=$(df "$vol" 2>/dev/null | awk 'NR==2 {print $1}')
+        [[ -z "$vol_device" ]] && continue
+        [[ "$vol_device" == "$root_device" ]] && continue
+
+        [[ ! -w "$vol" ]] && continue
+
+        if command -v diskutil &>/dev/null; then
+            info=$(diskutil info "$vol" 2>/dev/null || true)
+            device_location=$(echo "$info" | awk -F': *' '/Device Location/ {print $2}')
+            protocol=$(echo "$info" | awk -F': *' '/Protocol/ {print $2}')
+            removable=$(echo "$info" | awk -F': *' '/Removable Media/ {print $2}')
+
+            if [[ "$device_location" != "External" && "$protocol" != "USB" && "$removable" != "Removable" ]]; then
+                continue
+            fi
+        fi
+
+        free_space=$(df -h "$vol" 2>/dev/null | awk 'NR==2 {print $4}')
+
+        USB_DRIVES+=("$vol")
+        USB_SIZES+=("${free_space:-unknown}")
+    done
+}
+
+is_valid_ipv4() {
+    local ip="$1"
+    [[ "$ip" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] || return 1
+
+    local IFS=.
+    local octet
+    for octet in $ip; do
+        [[ "$octet" =~ ^[0-9]+$ ]] || return 1
+        (( octet >= 0 && octet <= 255 )) || return 1
+    done
+    return 0
+}
+
+prompt_ssh_target() {
+    echo ""
+    scan_lan
+
+    local target_ip="" sel ssh_user ssh_pass
+    local manual_option=1
+    if [[ ${#SSH_HOSTS[@]} -gt 0 ]]; then
+        echo ""
+        echo -e "  ${BOLD}Detected SSH hosts (possible Linux machines):${RESET}"
+        echo ""
+        local i=1
+        for ip in "${SSH_HOSTS[@]}"; do
+            echo -e "  ${BOLD}$i)${RESET} $ip"
+            ((i++))
+        done
+        manual_option=$i
+        echo -e "  ${BOLD}$manual_option)${RESET} Enter IP manually"
+        echo ""
+        read -rp "Select target [1-$manual_option]: " sel
+
+        if [[ "$sel" =~ ^[0-9]+$ ]] && (( sel >= 1 && sel <= ${#SSH_HOSTS[@]} )); then
+            target_ip="${SSH_HOSTS[$((sel-1))]}"
+        else
+            read -rp "IP address: " target_ip
+        fi
+    else
+        echo ""
+        echo -e "  ${DIM}No SSH hosts found on LAN.${RESET}"
+        echo ""
+        read -rp "IP address: " target_ip
+    fi
+
+    if [[ -z "$target_ip" ]]; then
+        echo "No target provided, skipping."
+        return
+    fi
+
+    if ! is_valid_ipv4 "$target_ip"; then
+        echo "ERROR: Invalid IP address: $target_ip"
+        return
+    fi
+
+    echo ""
+    read -rp "SSH username: " ssh_user
+    if [[ -z "$ssh_user" ]]; then
+        echo "No username provided, skipping."
+        return
+    fi
+
+    read -rsp "SSH password (leave blank for key-based auth): " ssh_pass
+    echo ""
+
+    local ssh_target="${ssh_user}@${target_ip}"
+    do_deploy_ssh "$ssh_target" "$ssh_pass"
+}
+
+prompt_usb_target() {
+    scan_usb_drives
+
+    local usb_path="" sel
+    if [[ ${#USB_DRIVES[@]} -gt 0 ]]; then
+        echo ""
+        echo -e "  ${BOLD}Detected external drives:${RESET}"
+        echo ""
+        local i=1
+        for idx in "${!USB_DRIVES[@]}"; do
+            echo -e "  ${BOLD}$i)${RESET} ${USB_DRIVES[$idx]}  ${DIM}(${USB_SIZES[$idx]} free)${RESET}"
+            ((i++))
+        done
+        echo -e "  ${BOLD}$i)${RESET} Enter path manually"
+        echo ""
+        read -rp "Select drive [1-$i]: " sel
+
+        if [[ "$sel" =~ ^[0-9]+$ ]] && (( sel >= 1 && sel <= ${#USB_DRIVES[@]} )); then
+            usb_path="${USB_DRIVES[$((sel-1))]}"
+        elif [[ "$sel" == "$i" ]] || [[ -z "$sel" ]]; then
+            read -rp "Mount path: " usb_path
+        else
+            read -rp "Mount path: " usb_path
+        fi
+
+        if [[ -z "$usb_path" ]]; then
+            echo "No path provided, skipping."
+            return
+        fi
+
+        do_deploy_usb "$usb_path"
+    else
+        echo ""
+        echo -e "  ${DIM}No external drives detected.${RESET}"
+        echo ""
+        read -rp "Mount path (e.g. /Volumes/USB): " usb_path
+        if [[ -z "$usb_path" ]]; then
+            echo "No path provided, skipping."
+            return
+        fi
+        do_deploy_usb "$usb_path"
+    fi
 }
 
 deploy_package() {
@@ -116,6 +333,7 @@ do_deploy_usb() {
 
 do_deploy_ssh() {
     local target="$1"
+    local ssh_password="${2:-}"
     local token lan_ip pkg_dir tmp_dir
 
     token=$(get_token)
@@ -135,13 +353,57 @@ do_deploy_ssh() {
     echo "Packaging for SSH deploy..."
     tar -czf "$tmp_dir/imsg-gtk-install.tar.gz" -C "$tmp_dir" imsg-gtk-install
 
-    echo -e "Copying to ${CYAN}$target${RESET}..."
-    scp "$tmp_dir/imsg-gtk-install.tar.gz" "$target:/tmp/imsg-gtk-install.tar.gz"
+    local ssh_opts=(
+        -o ConnectTimeout=8
+        -o ServerAliveInterval=15
+        -o StrictHostKeyChecking=accept-new
+    )
+    local remote_install_cmd="cd /tmp && tar xzf imsg-gtk-install.tar.gz && cd imsg-gtk-install && chmod +x install.sh && ./install.sh"
+    local remote_install_cmd_with_sudo_pw="$remote_install_cmd"
+    if [[ -n "$ssh_password" ]]; then
+        local quoted_pw
+        quoted_pw=$(printf '%q' "$ssh_password")
+        remote_install_cmd_with_sudo_pw="export IMSG_SUDO_PASSWORD=${quoted_pw}; ${remote_install_cmd}"
+    fi
 
-    echo "Installing on remote host..."
-    ssh "$target" "cd /tmp && tar xzf imsg-gtk-install.tar.gz && cd imsg-gtk-install && chmod +x install.sh && ./install.sh"
+    local deploy_rc=0
+    set +e
+    if [[ -n "$ssh_password" ]] && command -v sshpass &>/dev/null; then
+        echo -e "Copying to ${CYAN}$target${RESET} with password auth..."
+        exec 3<<<"$ssh_password"
+        sshpass -d 3 scp "${ssh_opts[@]}" "$tmp_dir/imsg-gtk-install.tar.gz" "$target:/tmp/imsg-gtk-install.tar.gz"
+        deploy_rc=$?
+        exec 3<&-
+        if [[ $deploy_rc -eq 0 ]]; then
+            echo "Installing on remote host..."
+            exec 4<<<"$ssh_password"
+            sshpass -d 4 ssh "${ssh_opts[@]}" -tt "$target" "$remote_install_cmd_with_sudo_pw"
+            deploy_rc=$?
+            exec 4<&-
+        fi
+    else
+        if [[ -n "$ssh_password" ]]; then
+            echo -e "${YELLOW}sshpass not installed; falling back to interactive SSH prompts.${RESET}"
+        fi
+        echo -e "Copying to ${CYAN}$target${RESET}..."
+        scp "${ssh_opts[@]}" "$tmp_dir/imsg-gtk-install.tar.gz" "$target:/tmp/imsg-gtk-install.tar.gz"
+        deploy_rc=$?
+        if [[ $deploy_rc -eq 0 ]]; then
+            echo "Installing on remote host..."
+            ssh "${ssh_opts[@]}" -tt "$target" "$remote_install_cmd_with_sudo_pw"
+            deploy_rc=$?
+        fi
+    fi
+    set -e
+    unset ssh_password
 
     rm -rf "$tmp_dir"
+
+    if [[ $deploy_rc -ne 0 ]]; then
+        echo "ERROR: SSH deployment failed."
+        exit 1
+    fi
+
     echo ""
     echo -e "${GREEN}Deployment complete.${RESET} Run 'imsg-gtk' on the Linux machine to launch."
     echo ""
@@ -281,6 +543,7 @@ PLIST
         echo -e "LAN address: ${CYAN}http://${lan_ip}:${BIND_PORT}${RESET}"
     fi
 
+    check_chatdb_access
     prompt_deploy "$lan_ip"
 }
 
@@ -298,22 +561,10 @@ prompt_deploy() {
 
     case "$choice" in
         1)
-            echo ""
-            read -rp "SSH target (user@host): " ssh_target
-            if [[ -z "$ssh_target" ]]; then
-                echo "No target provided, skipping."
-                return
-            fi
-            do_deploy_ssh "$ssh_target"
+            prompt_ssh_target
             ;;
         2)
-            echo ""
-            read -rp "USB mount path (e.g. /Volumes/USB): " usb_path
-            if [[ -z "$usb_path" ]]; then
-                echo "No path provided, skipping."
-                return
-            fi
-            do_deploy_usb "$usb_path"
+            prompt_usb_target
             ;;
         3|"")
             echo ""

@@ -1,11 +1,15 @@
 import asyncio
 import getpass
+import hmac
 import json
 import logging
 import os
+import re
 import signal
 import subprocess
 import sys
+from contextlib import asynccontextmanager
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -44,17 +48,52 @@ def _load_bearer_token() -> str:
     )
     token = result.stdout.strip()
     if result.returncode != 0 or not token:
-        logger.error("Failed to load bearer token from Keychain")
-        sys.exit(1)
+        raise RuntimeError("Failed to load bearer token from Keychain")
     return token
 
 
-BEARER_TOKEN = _load_bearer_token()
+@lru_cache(maxsize=1)
+def get_bearer_token() -> str:
+    # Allow explicit override for testing and containerized runs.
+    token = os.getenv("IMSG_BRIDGE_TOKEN", "").strip()
+    if token:
+        return token
+    return _load_bearer_token()
+
+
+@lru_cache(maxsize=1)
+def get_imsg_version() -> str:
+    try:
+        result = subprocess.run(
+            [IMSG, "--version"],
+            capture_output=True,
+            text=True,
+            timeout=5.0,
+        )
+    except Exception:
+        return "unknown"
+
+    text = (result.stdout or result.stderr).strip()
+    if result.returncode != 0 or not text:
+        return "unknown"
+
+    match = re.search(r"\d+\.\d+\.\d+(?:[-+._a-zA-Z0-9]*)?", text)
+    return match.group(0) if match else text
 
 
 async def verify_token(request: Request) -> None:
+    try:
+        expected_token = get_bearer_token()
+    except RuntimeError as exc:
+        logger.error("%s", exc)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Server token unavailable")
+
     auth = request.headers.get("Authorization", "")
-    if not auth.startswith("Bearer ") or auth[7:] != BEARER_TOKEN:
+    if not auth.startswith("Bearer "):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or missing token")
+
+    presented = auth[7:]
+    if not hmac.compare_digest(presented, expected_token):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or missing token")
 
 
@@ -258,20 +297,24 @@ class SubprocessManager:
 
 # --- App ---
 
-app = FastAPI(title="iMessage Bridge", version="0.1.0")
 manager = SubprocessManager()
 
 
-@app.on_event("startup")
-async def on_startup() -> None:
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
     loop = asyncio.get_event_loop()
-    loop.add_signal_handler(signal.SIGTERM, lambda: asyncio.create_task(manager.stop()))
+    try:
+        loop.add_signal_handler(signal.SIGTERM, lambda: asyncio.create_task(manager.stop()))
+    except (NotImplementedError, RuntimeError):
+        logger.debug("Signal handlers unavailable in this runtime")
     await manager.start()
+    try:
+        yield
+    finally:
+        await manager.stop()
 
 
-@app.on_event("shutdown")
-async def on_shutdown() -> None:
-    await manager.stop()
+app = FastAPI(title="iMessage Bridge", version="0.1.0", lifespan=lifespan)
 
 
 @app.post("/send", dependencies=[Depends(verify_token)])
@@ -302,13 +345,14 @@ async def message_history(chat_id: int, limit: int = Query(default=50, ge=1)) ->
 
 @app.get("/health", dependencies=[Depends(verify_token)])
 async def health_check() -> JSONResponse:
+    imsg_version = await asyncio.to_thread(get_imsg_version)
     try:
         await run_imsg("chats", "--json", timeout=5.0)
-        return JSONResponse(content={"status": "ok", "imsg_version": "0.5.0"})
+        return JSONResponse(content={"status": "ok", "imsg_version": imsg_version})
     except HTTPException:
         return JSONResponse(
             status_code=503,
-            content={"status": "error", "detail": "imsg probe failed"},
+            content={"status": "error", "detail": "imsg probe failed", "imsg_version": imsg_version},
         )
 
 
@@ -317,11 +361,17 @@ async def websocket_endpoint(
     ws: WebSocket,
     token: str | None = Query(default=None),
 ) -> None:
+    try:
+        expected_token = get_bearer_token()
+    except RuntimeError:
+        await ws.close(code=status.WS_1011_INTERNAL_ERROR, reason="Server token unavailable")
+        return
+
     auth_header = ws.headers.get("Authorization", "")
     header_token = auth_header[7:] if auth_header.startswith("Bearer ") else None
     effective_token = header_token or token
 
-    if effective_token != BEARER_TOKEN:
+    if not effective_token or not hmac.compare_digest(effective_token, expected_token):
         await ws.close(code=status.WS_1008_POLICY_VIOLATION, reason="Unauthorized")
         return
 

@@ -11,6 +11,19 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 DESKTOP_DIR="$HOME/.local/share/applications"
 BIN_DIR="$HOME/.local/bin"
 
+run_sudo() {
+    if [[ "$EUID" -eq 0 ]]; then
+        "$@"
+        return
+    fi
+
+    if [[ -n "${IMSG_SUDO_PASSWORD:-}" ]]; then
+        printf '%s\n' "$IMSG_SUDO_PASSWORD" | sudo -S -p '' "$@"
+    else
+        sudo "$@"
+    fi
+}
+
 echo "=== imsg-gtk installer ==="
 echo ""
 
@@ -28,11 +41,12 @@ fi
 # Install system dependencies
 echo "Installing system packages..."
 if command -v apt-get &>/dev/null; then
-    sudo apt-get update -qq
-    sudo apt-get install -y -qq python3 python3-venv python3-gi python3-gi-cairo \
+    run_sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get update -qq
+    run_sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a \
+        apt-get install -y -qq python3 python3-venv python3-gi python3-gi-cairo \
         gir1.2-gtk-4.0 gir1.2-adw-1 libcairo2-dev
 elif command -v dnf &>/dev/null; then
-    sudo dnf install -y python3 python3-gobject gtk4 libadwaita
+    run_sudo dnf install -y python3 python3-gobject gtk4 libadwaita
 else
     echo "WARNING: Unsupported package manager. Install manually:"
     echo "  python3, python3-gi, gir1.2-gtk-4.0, gir1.2-adw-1"

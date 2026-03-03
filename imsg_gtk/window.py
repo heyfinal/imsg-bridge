@@ -3,7 +3,7 @@ import gi
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 
-from gi.repository import Adw, Gtk
+from gi.repository import Adw
 
 from imsg_gtk.chatview import ChatView
 from imsg_gtk.sidebar import ChatSidebar

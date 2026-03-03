@@ -36,7 +36,7 @@ Existing iMessage automation tools are either bloated (BlueBubbles, 200MB+ Elect
 - **Python 3.12+**
 - [`imsg`](https://github.com/nickthecook/imsg) CLI installed at `/opt/homebrew/bin/imsg`
 - iMessage signed in and working in Messages.app
-- Full Disk Access granted to your terminal (for `chat.db` reads)
+- Full Disk Access granted to your terminal app and Python (for `chat.db` reads)
 
 ## Install
 
@@ -75,7 +75,7 @@ cd imsg-bridge  # or ~/.imsg-bridge if you used the one-liner
 
 # Or run manually
 imsg-bridge
-# → Listening on http://127.0.0.1:5100
+# → Listening on configured host:5100
 ```
 
 ## API
@@ -118,7 +118,7 @@ curl http://127.0.0.1:5100/health \
   -H "Authorization: Bearer $TOKEN"
 ```
 
-Returns `{"status": "ok", "imsg_version": "0.5.0"}` when everything is working.
+Returns `{"status": "ok", "imsg_version": "<detected-version>"}` when everything is working.
 
 ## WebSocket
 
@@ -158,8 +158,12 @@ The `setup.sh` script handles everything:
 
 This will:
 1. Generate a secure auth token and store it in macOS Keychain
-2. Install a LaunchAgent that starts on login and auto-restarts on crash
-3. Verify the service is running
+2. Let you choose bind mode (`0.0.0.0` for LAN clients or `127.0.0.1` for local-only)
+3. Install a LaunchAgent that starts on login and auto-restarts on crash
+4. Optionally deploy Linux client via:
+   - LAN scan for SSH hosts (or manual IP entry) + username/password prompt
+   - USB/external drive scan (or manual mount path)
+5. Verify the service is running
 
 Logs are written to `~/Library/Logs/imessage-bridge.log` and `~/Library/Logs/imessage-bridge.err`.
 
@@ -194,10 +198,29 @@ imsg CLI (/opt/homebrew/bin/imsg)
 
 ## Security
 
-- Binds to `127.0.0.1` only — not accessible from the network
+- Setup supports both bind modes:
+  - `127.0.0.1` local-only
+  - `0.0.0.0` LAN-accessible (required for direct Linux client access)
 - Bearer token required on all endpoints (REST and WebSocket)
 - Token stored in macOS Keychain, never on disk
+- Uses constant-time token comparison for auth checks
 - For remote access, use [Tailscale](https://tailscale.com) or an SSH tunnel
+
+## Development
+
+```bash
+# Install dev tooling
+python3 -m pip install -e ".[dev]"
+
+# Optional: run checks automatically on commit
+pre-commit install
+
+# Lint + tests
+ruff check imsg_bridge imsg_gtk tests
+pytest -q
+```
+
+CI runs these checks on every push and pull request.
 
 ## License
 
