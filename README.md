@@ -42,17 +42,17 @@ Existing iMessage automation tools are either bloated (BlueBubbles, 200MB+ Elect
 
 ### Preferred: AI-assisted install (Claude Code / Codex / Gemini)
 
-Use a short prompt like:
+Use a one-liner like:
 
 ```text
-claude install https://github.com/heyfinal/imsg-bridge.git
+claude code "Install, configure, test, and optionally deploy imsg-bridge from https://github.com/heyfinal/imsg-bridge.git on this macOS machine."
 ```
 
 Or:
 
 ```text
-codex install https://github.com/heyfinal/imsg-bridge.git
-gemini install https://github.com/heyfinal/imsg-bridge.git
+codex "Install, configure, test, and optionally deploy imsg-bridge from https://github.com/heyfinal/imsg-bridge.git on this macOS machine."
+gemini "Install, configure, test, and optionally deploy imsg-bridge from https://github.com/heyfinal/imsg-bridge.git on this macOS machine."
 ```
 
 If you already have the repo locally, generate a tool-specific prompt and copy it to clipboard:

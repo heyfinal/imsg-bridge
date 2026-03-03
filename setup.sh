@@ -22,7 +22,18 @@ RESET="\033[0m"
 build_ai_install_prompt() {
     local agent="${1:-codex}"
     local repo_url="https://github.com/heyfinal/imsg-bridge.git"
-    echo "${agent} install ${repo_url}"
+    local install_dir="${IMSG_BRIDGE_DIR:-$HOME/.imsg-bridge}"
+    local assistant_cmd="$agent"
+    case "$agent" in
+        claude) assistant_cmd="claude code" ;;
+        codex) assistant_cmd="codex" ;;
+        gemini) assistant_cmd="gemini" ;;
+    esac
+
+    local task
+    task="Install, configure, test, and optionally deploy imsg-bridge from ${repo_url} on this macOS machine: clone or update into ${install_dir}; cd ${install_dir}; run ./setup.sh; verify launchd service com.imsg-bridge is running; verify /health using bearer token from Keychain; if chat.db access fails, guide Full Disk Access and re-test; optionally run ./setup.sh --deploy to deploy the Linux client."
+
+    echo "${assistant_cmd} \"${task}\""
 }
 
 do_ai_prompt() {
