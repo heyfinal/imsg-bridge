@@ -11,6 +11,13 @@ CURRENT_USER="$(whoami)"
 BIND_HOST="0.0.0.0"
 BIND_PORT="5100"
 
+BOLD="\033[1m"
+DIM="\033[2m"
+GREEN="\033[32m"
+CYAN="\033[36m"
+YELLOW="\033[33m"
+RESET="\033[0m"
+
 # Detect Python — prefer the project venv, fall back to system
 if [[ -x "$SCRIPT_DIR/.venv/bin/python3" ]]; then
     PYTHON="$SCRIPT_DIR/.venv/bin/python3"
@@ -22,7 +29,6 @@ else
 fi
 
 get_lan_ip() {
-    # Get primary LAN IP on macOS
     local ip
     ip=$(ipconfig getifaddr en0 2>/dev/null || ipconfig getifaddr en1 2>/dev/null || true)
     if [[ -z "$ip" ]]; then
@@ -54,20 +60,14 @@ deploy_package() {
     rm -rf "$pkg_dir"
     mkdir -p "$pkg_dir"
 
-    # Copy GTK client source
     cp -r "$SCRIPT_DIR/imsg_gtk" "$pkg_dir/imsg_gtk"
-    cp "$SCRIPT_DIR/imsg_gtk/pyproject.toml" "$pkg_dir/pyproject.toml" 2>/dev/null || true
-
-    # If pyproject.toml is inside imsg_gtk/, copy from there
     if [[ -f "$SCRIPT_DIR/imsg_gtk/pyproject.toml" ]]; then
         cp "$SCRIPT_DIR/imsg_gtk/pyproject.toml" "$pkg_dir/pyproject.toml"
     fi
 
-    # Copy install script
     cp "$SCRIPT_DIR/imsg_gtk/install-linux.sh" "$pkg_dir/install.sh"
     chmod +x "$pkg_dir/install.sh"
 
-    # Write pre-filled config
     cat > "$pkg_dir/config.json" <<EOF
 {
     "host": "$lan_ip",
@@ -101,17 +101,16 @@ do_deploy_usb() {
     pkg_dir=$(deploy_package "$usb_path" "$token" "$lan_ip")
 
     echo ""
-    echo "Deployment package created at: $pkg_dir"
-    echo "  Config: host=$lan_ip port=$BIND_PORT"
+    echo -e "${GREEN}Deployment package created at:${RESET} $pkg_dir"
+    echo -e "  Config: host=${CYAN}$lan_ip${RESET} port=${CYAN}$BIND_PORT${RESET}"
     echo ""
     echo "On the Linux machine:"
-    echo "  cd $pkg_dir"
-    echo "  ./install.sh"
+    echo "  cd $pkg_dir && ./install.sh"
     echo ""
 }
 
 do_deploy_ssh() {
-    local target="$1"  # user@host
+    local target="$1"
     local token lan_ip pkg_dir tmp_dir
 
     token=$(get_token)
@@ -131,7 +130,7 @@ do_deploy_ssh() {
     echo "Packaging for SSH deploy..."
     tar -czf "$tmp_dir/imsg-gtk-install.tar.gz" -C "$tmp_dir" imsg-gtk-install
 
-    echo "Copying to $target..."
+    echo -e "Copying to ${CYAN}$target${RESET}..."
     scp "$tmp_dir/imsg-gtk-install.tar.gz" "$target:/tmp/imsg-gtk-install.tar.gz"
 
     echo "Installing on remote host..."
@@ -139,26 +138,23 @@ do_deploy_ssh() {
 
     rm -rf "$tmp_dir"
     echo ""
-    echo "Deployment complete. Run 'imsg-gtk' on the Linux machine to launch."
+    echo -e "${GREEN}Deployment complete.${RESET} Run 'imsg-gtk' on the Linux machine to launch."
     echo ""
 }
 
 do_setup() {
-    # Generate or update auth token
     TOKEN=$(generate_token)
 
     echo ""
-    echo "Auth token stored in Keychain."
+    echo -e "${GREEN}Auth token stored in Keychain.${RESET}"
     echo "Use this token to authenticate with the bridge:"
     echo ""
-    echo "  $TOKEN"
+    echo -e "  ${BOLD}$TOKEN${RESET}"
     echo ""
 
-    # Create directories
     mkdir -p "$BRIDGE_DIR"
     mkdir -p "$LOG_DIR"
 
-    # Generate plist
     cat > "$PLIST_DEST" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -205,23 +201,19 @@ PLIST
 
     echo "Plist generated at $PLIST_DEST"
 
-    # Unload existing service if loaded
     if launchctl list | grep -q "$SERVICE_LABEL"; then
         launchctl unload "$PLIST_DEST" 2>/dev/null || true
     fi
 
-    # Load service
     launchctl load "$PLIST_DEST"
     echo "Service loaded."
 
-    # Give it a moment to start
     sleep 2
 
-    # Check if the service is running
     if launchctl list | grep -q "$SERVICE_LABEL"; then
         PID=$(launchctl list | awk -v label="$SERVICE_LABEL" '$3 == label {print $1}')
         if [[ "$PID" != "-" && -n "$PID" ]]; then
-            echo "Service started successfully (PID $PID)."
+            echo -e "${GREEN}Service started successfully${RESET} (PID $PID)."
         else
             echo "Service loaded but not yet running. Check logs:"
             echo "  tail -f ~/Library/Logs/imessage-bridge.log"
@@ -236,14 +228,74 @@ PLIST
     local lan_ip
     lan_ip=$(get_lan_ip)
     echo ""
-    echo "Bridge listening on ${BIND_HOST}:${BIND_PORT}"
+    echo -e "${GREEN}Bridge listening on ${CYAN}${BIND_HOST}:${BIND_PORT}${RESET}"
     if [[ -n "$lan_ip" ]]; then
-        echo "LAN address: http://${lan_ip}:${BIND_PORT}"
+        echo -e "LAN address: ${CYAN}http://${lan_ip}:${BIND_PORT}${RESET}"
     fi
+
+    prompt_deploy "$lan_ip"
+}
+
+prompt_deploy() {
+    local lan_ip="${1:-}"
+
     echo ""
-    echo "Deploy to Linux:"
-    echo "  ./setup.sh --deploy-usb /Volumes/USB"
-    echo "  ./setup.sh --deploy-ssh user@linux-ip"
+    echo -e "${BOLD}Deploy Linux client?${RESET}"
+    echo ""
+    echo -e "  ${BOLD}1)${RESET} Deploy via SSH       ${DIM}(push to a Linux machine over the network)${RESET}"
+    echo -e "  ${BOLD}2)${RESET} Deploy to USB drive  ${DIM}(copy installer package to a mount point)${RESET}"
+    echo -e "  ${BOLD}3)${RESET} Skip                 ${DIM}(deploy later with ./setup.sh --deploy-ssh or --deploy-usb)${RESET}"
+    echo ""
+    read -rp "Choice [1/2/3]: " choice
+
+    case "$choice" in
+        1)
+            echo ""
+            read -rp "SSH target (user@host): " ssh_target
+            if [[ -z "$ssh_target" ]]; then
+                echo "No target provided, skipping."
+                return
+            fi
+            do_deploy_ssh "$ssh_target"
+            ;;
+        2)
+            echo ""
+            read -rp "USB mount path (e.g. /Volumes/USB): " usb_path
+            if [[ -z "$usb_path" ]]; then
+                echo "No path provided, skipping."
+                return
+            fi
+            do_deploy_usb "$usb_path"
+            ;;
+        3|"")
+            echo ""
+            echo "Skipped. Deploy later:"
+            echo -e "  ${DIM}./setup.sh --deploy-ssh user@host${RESET}"
+            echo -e "  ${DIM}./setup.sh --deploy-usb /Volumes/USB${RESET}"
+            echo ""
+            ;;
+        *)
+            echo "Invalid choice, skipping deployment."
+            ;;
+    esac
+}
+
+do_deploy_menu() {
+    local token lan_ip
+    token=$(get_token)
+    if [[ -z "$token" ]]; then
+        echo "No token found. Run ./setup.sh first to install the bridge."
+        exit 1
+    fi
+    lan_ip=$(get_lan_ip)
+
+    echo ""
+    echo -e "${BOLD}imsg-bridge — Deploy Linux Client${RESET}"
+    echo ""
+    if [[ -n "$lan_ip" ]]; then
+        echo -e "  Bridge: ${CYAN}http://${lan_ip}:${BIND_PORT}${RESET}"
+    fi
+    prompt_deploy "$lan_ip"
 }
 
 # --- Main ---
@@ -263,11 +315,19 @@ case "${1:-}" in
         fi
         do_deploy_ssh "$2"
         ;;
+    --deploy)
+        do_deploy_menu
+        ;;
     "")
         do_setup
         ;;
     *)
-        echo "Usage: ./setup.sh [--deploy-usb <path>] [--deploy-ssh user@host]"
+        echo -e "Usage: ./setup.sh ${DIM}[options]${RESET}"
+        echo ""
+        echo "  (no args)               Install bridge + optional deploy"
+        echo "  --deploy                 Interactive deploy menu"
+        echo "  --deploy-ssh user@host   Push client to Linux via SSH"
+        echo "  --deploy-usb /path       Copy client package to USB"
         exit 1
         ;;
 esac
