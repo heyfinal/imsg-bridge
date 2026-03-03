@@ -40,7 +40,31 @@ Existing iMessage automation tools are either bloated (BlueBubbles, 200MB+ Elect
 
 ## Install
 
-### One-liner (no package manager needed)
+### Preferred: AI-assisted install (Claude Code / Codex / Gemini)
+
+Paste this into your coding assistant:
+
+```text
+Install and configure imsg-bridge on this macOS machine.
+
+1) Clone or update https://github.com/heyfinal/imsg-bridge.git into ~/.imsg-bridge
+2) cd ~/.imsg-bridge
+3) Run ./setup.sh
+4) Choose LAN bind mode unless I request localhost-only
+5) Verify launchd service com.imsg-bridge is running
+6) Verify /health using bearer token from Keychain
+7) If chat.db access fails, guide Full Disk Access setup
+```
+
+If you already have the repo locally, generate a tool-specific prompt and copy it to clipboard:
+
+```bash
+./setup.sh --ai-prompt codex
+# or: ./setup.sh --ai-prompt claude
+# or: ./setup.sh --ai-prompt gemini
+```
+
+### Manual one-liner (no package manager needed)
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/heyfinal/imsg-bridge/main/install.sh | bash
@@ -48,7 +72,7 @@ curl -fsSL https://raw.githubusercontent.com/heyfinal/imsg-bridge/main/install.s
 
 This clones the repo to `~/.imsg-bridge`, creates a virtual environment, and installs dependencies using only Python's built-in `venv` and `pip`. No Homebrew, no `uv`, no global installs.
 
-### With uv
+### Manual: with uv
 
 ```bash
 git clone https://github.com/heyfinal/imsg-bridge.git
@@ -56,7 +80,7 @@ cd imsg-bridge
 uv sync
 ```
 
-### With pip
+### Manual: with pip
 
 ```bash
 git clone https://github.com/heyfinal/imsg-bridge.git

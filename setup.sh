@@ -19,6 +19,77 @@ CYAN="\033[36m"
 YELLOW="\033[33m"
 RESET="\033[0m"
 
+build_ai_install_prompt() {
+    local agent="${1:-codex}"
+    local install_dir="${IMSG_BRIDGE_DIR:-$HOME/.imsg-bridge}"
+    cat <<EOF
+You are helping me install and configure imsg-bridge on this macOS machine.
+
+Use these requirements:
+1. Clone or update https://github.com/heyfinal/imsg-bridge.git into ${install_dir}
+2. Ensure Python 3.12+ is available
+3. Ensure the imsg CLI exists at /opt/homebrew/bin/imsg
+4. Run:
+   cd ${install_dir}
+   ./setup.sh
+5. Choose LAN bind mode unless I request localhost-only
+6. Verify launchd service com.imsg-bridge is running
+7. Verify health endpoint with bearer token from Keychain
+8. If Messages DB access is blocked, walk me through Full Disk Access
+9. Optionally deploy Linux client with setup.sh --deploy
+
+While doing this:
+- Show each command before running it
+- Stop and ask before any destructive operation
+- Summarize final bridge URL, token location, and service status
+
+Target assistant: ${agent}
+EOF
+}
+
+do_ai_prompt() {
+    local agent="${1:-}"
+    if [[ -z "$agent" ]]; then
+        echo ""
+        echo -e "${BOLD}Select AI assistant:${RESET}"
+        echo -e "  ${BOLD}1)${RESET} Codex   ${DIM}(default)${RESET}"
+        echo -e "  ${BOLD}2)${RESET} Claude Code"
+        echo -e "  ${BOLD}3)${RESET} Gemini"
+        echo ""
+        local choice
+        read -rp "Choice [1/2/3]: " choice
+        case "$choice" in
+            2) agent="claude" ;;
+            3) agent="gemini" ;;
+            *) agent="codex" ;;
+        esac
+    fi
+
+    case "$agent" in
+        codex|claude|gemini) ;;
+        *)
+            echo "Usage: ./setup.sh --ai-prompt [codex|claude|gemini]"
+            exit 1
+            ;;
+    esac
+
+    local prompt
+    prompt="$(build_ai_install_prompt "$agent")"
+
+    echo ""
+    echo -e "${BOLD}AI Install Prompt (${agent})${RESET}"
+    echo ""
+    echo "$prompt"
+    echo ""
+
+    if command -v pbcopy &>/dev/null; then
+        printf "%s" "$prompt" | pbcopy
+        echo "Prompt copied to clipboard."
+    else
+        echo "pbcopy not found; copy the prompt manually."
+    fi
+}
+
 resolve_python() {
     if [[ -x "$SCRIPT_DIR/.venv/bin/python3" ]]; then
         PYTHON="$SCRIPT_DIR/.venv/bin/python3"
@@ -744,6 +815,9 @@ do_deploy_menu() {
 # --- Main ---
 
 case "${1:-}" in
+    --ai-prompt|--ai-install)
+        do_ai_prompt "${2:-}"
+        ;;
     --deploy-usb)
         if [[ -z "${2:-}" ]]; then
             echo "Usage: ./setup.sh --deploy-usb <path>"
@@ -768,6 +842,7 @@ case "${1:-}" in
         echo -e "Usage: ./setup.sh ${DIM}[options]${RESET}"
         echo ""
         echo "  (no args)               Install bridge + optional deploy"
+        echo "  --ai-prompt [assistant] Print/copy AI install prompt (codex|claude|gemini)"
         echo "  --deploy                 Interactive deploy menu"
         echo "  --deploy-ssh user@host   Push client to Linux via SSH"
         echo "  --deploy-usb /path       Copy client package to USB"
