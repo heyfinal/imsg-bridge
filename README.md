@@ -45,14 +45,14 @@ Existing iMessage automation tools are either bloated (BlueBubbles, 200MB+ Elect
 Use a one-liner like:
 
 ```text
-claude code "Install, configure, test, and optionally deploy imsg-bridge from https://github.com/heyfinal/imsg-bridge.git on this macOS machine."
+claude -p "Install, configure, test, and optionally deploy imsg-bridge from https://github.com/heyfinal/imsg-bridge.git on this macOS machine."
 ```
 
 Or:
 
 ```text
-codex "Install, configure, test, and optionally deploy imsg-bridge from https://github.com/heyfinal/imsg-bridge.git on this macOS machine."
-gemini "Install, configure, test, and optionally deploy imsg-bridge from https://github.com/heyfinal/imsg-bridge.git on this macOS machine."
+codex exec "Install, configure, test, and optionally deploy imsg-bridge from https://github.com/heyfinal/imsg-bridge.git on this macOS machine."
+gemini -p "Install, configure, test, and optionally deploy imsg-bridge from https://github.com/heyfinal/imsg-bridge.git on this macOS machine."
 ```
 
 If you already have the repo locally, generate a tool-specific prompt and copy it to clipboard:
