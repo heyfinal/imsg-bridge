@@ -10,6 +10,7 @@ VENV_DIR="$INSTALL_DIR/.venv"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 DESKTOP_DIR="$HOME/.local/share/applications"
 BIN_DIR="$HOME/.local/bin"
+ICON_DIR="$HOME/.local/share/icons/hicolor/scalable/apps"
 
 run_sudo() {
     if [[ "$EUID" -eq 0 ]]; then
@@ -77,9 +78,28 @@ fi
 mkdir -p "$BIN_DIR"
 cat > "$BIN_DIR/imsg-gtk" <<LAUNCHER
 #!/usr/bin/env bash
-exec "$VENV_DIR/bin/python3" -m imsg_gtk.app "\$@"
+INSTALL_DIR="$INSTALL_DIR"
+VENV_DIR="$VENV_DIR"
+export PYTHONPATH="\$INSTALL_DIR\${PYTHONPATH:+:\$PYTHONPATH}"
+cd "\$INSTALL_DIR" || exit 1
+exec "\$VENV_DIR/bin/python3" -m imsg_gtk.app "\$@"
 LAUNCHER
 chmod +x "$BIN_DIR/imsg-gtk"
+
+# Validate import path early so launcher failures are caught during install
+if ! PYTHONPATH="$INSTALL_DIR" "$VENV_DIR/bin/python3" -c "import imsg_gtk.app" >/dev/null 2>&1; then
+    echo "ERROR: Failed to import imsg_gtk.app after installation."
+    echo "Check Python/GTK dependencies and rerun install."
+    exit 1
+fi
+
+# Install app icon (iMessage-style)
+DESKTOP_ICON="chat"
+if [[ -f "$INSTALL_DIR/imsg_gtk/icon.svg" ]]; then
+    mkdir -p "$ICON_DIR"
+    cp "$INSTALL_DIR/imsg_gtk/icon.svg" "$ICON_DIR/imsg-gtk.svg"
+    DESKTOP_ICON="imsg-gtk"
+fi
 
 # Create .desktop entry
 mkdir -p "$DESKTOP_DIR"
@@ -89,7 +109,7 @@ Type=Application
 Name=iMessage
 Comment=iMessage client for Linux
 Exec=$BIN_DIR/imsg-gtk
-Icon=chat
+Icon=$DESKTOP_ICON
 Terminal=false
 Categories=Network;Chat;InstantMessaging;
 Keywords=imessage;chat;messages;
@@ -98,6 +118,9 @@ DESKTOP
 # Update desktop database if available
 if command -v update-desktop-database &>/dev/null; then
     update-desktop-database "$DESKTOP_DIR" 2>/dev/null || true
+fi
+if command -v gtk-update-icon-cache &>/dev/null; then
+    gtk-update-icon-cache -f -t "$HOME/.local/share/icons/hicolor" 2>/dev/null || true
 fi
 
 echo ""
