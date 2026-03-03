@@ -240,13 +240,20 @@ PLIST
 
     echo "Plist generated at $PLIST_DEST"
 
-    # Remove existing service if loaded
+    # Remove existing service — try both old and new APIs
     launchctl bootout "$GUI_DOMAIN/$SERVICE_LABEL" 2>/dev/null || true
+    launchctl unload "$PLIST_DEST" 2>/dev/null || true
     sleep 1
 
-    # Bootstrap the service
-    launchctl bootstrap "$GUI_DOMAIN" "$PLIST_DEST"
-    echo "Service bootstrapped."
+    # Bootstrap the service — fall back to load if bootstrap fails
+    if launchctl bootstrap "$GUI_DOMAIN" "$PLIST_DEST" 2>/dev/null; then
+        echo "Service bootstrapped."
+    elif launchctl load "$PLIST_DEST" 2>/dev/null; then
+        echo "Service loaded."
+    else
+        echo "WARNING: Could not start service. Try manually:"
+        echo "  launchctl load $PLIST_DEST"
+    fi
 
     sleep 2
 
