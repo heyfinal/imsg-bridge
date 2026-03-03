@@ -10,6 +10,7 @@ VENV_DIR="$INSTALL_DIR/.venv"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 DESKTOP_DIR="$HOME/.local/share/applications"
 BIN_DIR="$HOME/.local/bin"
+GLOBAL_BIN="/usr/local/bin/imsg-gtk"
 ICON_DIR="$HOME/.local/share/icons/hicolor/scalable/apps"
 
 run_sudo() {
@@ -85,6 +86,15 @@ cd "\$INSTALL_DIR" || exit 1
 exec "\$VENV_DIR/bin/python3" -m imsg_gtk.app "\$@"
 LAUNCHER
 chmod +x "$BIN_DIR/imsg-gtk"
+
+# Install a global launcher when possible so `imsg-gtk` works without ~/.local/bin in PATH
+if [[ -w "/usr/local/bin" ]] || command -v sudo &>/dev/null; then
+    if run_sudo ln -sf "$BIN_DIR/imsg-gtk" "$GLOBAL_BIN" 2>/dev/null; then
+        echo "Global launcher installed at $GLOBAL_BIN"
+    else
+        echo "WARNING: Could not install global launcher at $GLOBAL_BIN"
+    fi
+fi
 
 # Validate import path early so launcher failures are caught during install
 if ! PYTHONPATH="$INSTALL_DIR" "$VENV_DIR/bin/python3" -c "import imsg_gtk.app" >/dev/null 2>&1; then
