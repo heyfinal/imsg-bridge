@@ -20,6 +20,9 @@ class ImsgWindow(Adw.ApplicationWindow):
 
         self._sidebar = ChatSidebar()
         self._sidebar.set_on_chat_selected(self._on_chat_selected)
+        self._sidebar.set_on_refresh_requested(self._load_chats)
+        self._sidebar.set_on_clear_chat_requested(self._clear_conversation)
+        self._sidebar.set_on_clear_all_requested(self._confirm_clear_all_messages)
         self._sidebar.set_size_request(280, -1)
 
         self._chatview = ChatView()
@@ -95,3 +98,39 @@ class ImsgWindow(Adw.ApplicationWindow):
         if chat_id == self._current_chat_id:
             self._chatview.append_message(msg)
         self._load_chats()
+
+    def _clear_conversation(self, chat_id):
+        if chat_id is None:
+            return
+
+        self._chats.pop(chat_id, None)
+        self._sidebar.set_chats(list(self._chats.values()))
+
+        if self._current_chat_id == chat_id:
+            self._current_chat_id = None
+            self._chatview.set_chat(None, "Messages", [])
+
+    def _confirm_clear_all_messages(self):
+        dialog = Adw.MessageDialog(
+            heading="Clear All Messages?",
+            body=(
+                "This clears the conversation list and open chat view in this Linux app only. "
+                "It does not delete messages from iMessage on the Mac."
+            ),
+        )
+        dialog.set_transient_for(self)
+        dialog.add_response("cancel", "Cancel")
+        dialog.add_response("clear", "Clear All")
+        dialog.set_response_appearance("clear", Adw.ResponseAppearance.DESTRUCTIVE)
+        dialog.set_default_response("cancel")
+        dialog.set_close_response("cancel")
+        dialog.connect("response", self._on_clear_all_response)
+        dialog.present()
+
+    def _on_clear_all_response(self, dialog, response):
+        if response == "clear":
+            self._chats = {}
+            self._current_chat_id = None
+            self._sidebar.set_chats([])
+            self._chatview.set_chat(None, "Messages", [])
+        dialog.close()
