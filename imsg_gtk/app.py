@@ -19,6 +19,7 @@ class ImsgApp(Adw.Application):
         super().__init__(application_id="com.imsg.gtk")
         self._bridge = None
         self._client = None
+        self._window = None
 
     def do_activate(self):
         cfg = config.load()
@@ -45,12 +46,12 @@ class ImsgApp(Adw.Application):
 
         self._load_css()
 
-        win = ImsgWindow(
+        self._window = ImsgWindow(
             application=self,
             async_bridge=self._bridge,
             client=self._client,
         )
-        win.present()
+        self._window.present()
 
     def do_shutdown(self):
         if self._bridge:
@@ -73,3 +74,7 @@ class ImsgApp(Adw.Application):
 def main():
     app = ImsgApp()
     app.run(sys.argv)
+
+
+if __name__ == "__main__":
+    main()

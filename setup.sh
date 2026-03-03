@@ -584,15 +584,18 @@ do_setup() {
     mkdir -p "$BRIDGE_DIR"
     mkdir -p "$LOG_DIR"
 
-    # Ensure dependencies are installed
-    if [[ ! -x "$SCRIPT_DIR/.venv/bin/python3" ]]; then
-        echo "Creating venv and installing dependencies..."
-        if command -v uv &>/dev/null; then
-            (cd "$SCRIPT_DIR" && uv sync)
-        else
+    # Ensure dependencies are installed and up to date
+    if command -v uv &>/dev/null; then
+        echo "Syncing bridge dependencies with uv..."
+        (cd "$SCRIPT_DIR" && uv sync)
+    else
+        if [[ ! -x "$SCRIPT_DIR/.venv/bin/python3" ]]; then
+            echo "Creating venv..."
             python3 -m venv "$SCRIPT_DIR/.venv"
-            "$SCRIPT_DIR/.venv/bin/pip" install --quiet -e "$SCRIPT_DIR"
         fi
+        echo "Updating bridge dependencies..."
+        "$SCRIPT_DIR/.venv/bin/pip" install --quiet --upgrade pip
+        "$SCRIPT_DIR/.venv/bin/pip" install --quiet -e "$SCRIPT_DIR"
     fi
     # Re-resolve so PYTHON always points to the venv
     resolve_python
