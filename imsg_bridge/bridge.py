@@ -6,6 +6,7 @@ import logging
 import os
 import re
 import signal
+import sqlite3
 import subprocess
 import sys
 from contextlib import asynccontextmanager
@@ -23,7 +24,7 @@ from fastapi import (
     WebSocketDisconnect,
     status,
 )
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
 
 logging.basicConfig(
@@ -36,6 +37,141 @@ logger = logging.getLogger("imessage-bridge")
 IMSG = "/opt/homebrew/bin/imsg"
 STATE_DIR = Path.home() / ".imessage-bridge"
 STATE_FILE = STATE_DIR / "state.json"
+ADDRESSBOOK_DB = Path.home() / "Library" / "Application Support" / "AddressBook" / "AddressBook-v22.abcddb"
+ADDRESSBOOK_EXTERNAL_DATA = (
+    Path.home() / "Library" / "Application Support" / "AddressBook" / ".AddressBook-v22_SUPPORT" / "_EXTERNAL_DATA"
+)
+
+
+def _normalize_phone(value: str) -> str:
+    return "".join(ch for ch in value if ch.isdigit())
+
+
+def _phone_lookup_keys(value: str) -> list[str]:
+    digits = _normalize_phone(value)
+    if not digits:
+        return []
+
+    keys = [f"phone:{digits}"]
+    if len(digits) > 10:
+        keys.append(f"phone:{digits[-10:]}")
+    if len(digits) >= 7:
+        keys.append(f"phone7:{digits[-7:]}")
+    if len(digits) >= 4:
+        keys.append(f"phone4:{digits[-4:]}")
+    return keys
+
+
+def _decode_contact_image_blob(blob: bytes | None) -> bytes | None:
+    if not blob:
+        return None
+
+    # AddressBook can store an external-image pointer blob:
+    # 0x02 + ASCII UUID + NUL
+    if blob.startswith(b"\x02"):
+        ref_bytes = blob[1:].split(b"\x00", maxsplit=1)[0]
+        try:
+            ref = ref_bytes.decode("utf-8").strip()
+        except UnicodeDecodeError:
+            ref = ""
+
+        if not ref:
+            return None
+
+        external_path = ADDRESSBOOK_EXTERNAL_DATA / ref
+        try:
+            return external_path.read_bytes() if external_path.exists() else None
+        except OSError:
+            return None
+
+    return bytes(blob)
+
+
+@lru_cache(maxsize=1)
+def _contact_avatar_index() -> dict[str, bytes]:
+    index: dict[str, bytes] = {}
+    if not ADDRESSBOOK_DB.exists():
+        return index
+
+    try:
+        conn = sqlite3.connect(f"file:{ADDRESSBOOK_DB}?mode=ro", uri=True)
+    except sqlite3.Error:
+        return index
+
+    try:
+        phone_rows = conn.execute(
+            """
+            SELECT
+              p.ZFULLNUMBER,
+              p.ZLASTFOURDIGITS,
+              COALESCE(r.ZTHUMBNAILIMAGEDATA, r.ZIMAGEDATA) AS IMAGE_BLOB
+            FROM ZABCDPHONENUMBER p
+            JOIN ZABCDRECORD r ON (p.ZOWNER = r.Z_PK OR p.Z22_OWNER = r.Z_PK)
+            WHERE COALESCE(r.ZTHUMBNAILIMAGEDATA, r.ZIMAGEDATA) IS NOT NULL
+            """
+        )
+        for full_number, last_four, image_blob in phone_rows:
+            image = _decode_contact_image_blob(image_blob)
+            if not image:
+                continue
+
+            for key in _phone_lookup_keys(full_number or ""):
+                index.setdefault(key, image)
+
+            if last_four:
+                digits = _normalize_phone(last_four)
+                if digits:
+                    index.setdefault(f"phone4:{digits[-4:]}", image)
+
+        email_rows = conn.execute(
+            """
+            SELECT
+              LOWER(e.ZADDRESS),
+              COALESCE(r.ZTHUMBNAILIMAGEDATA, r.ZIMAGEDATA) AS IMAGE_BLOB
+            FROM ZABCDEMAILADDRESS e
+            JOIN ZABCDRECORD r ON (e.ZOWNER = r.Z_PK OR e.Z22_OWNER = r.Z_PK)
+            WHERE COALESCE(r.ZTHUMBNAILIMAGEDATA, r.ZIMAGEDATA) IS NOT NULL
+            """
+        )
+        for email, image_blob in email_rows:
+            image = _decode_contact_image_blob(image_blob)
+            if image and email:
+                index.setdefault(f"email:{email}", image)
+    except sqlite3.Error:
+        logger.debug("Failed to query AddressBook avatar index", exc_info=True)
+    finally:
+        conn.close()
+
+    return index
+
+
+def get_contact_avatar(identifier: str) -> bytes | None:
+    ident = identifier.strip()
+    if not ident:
+        return None
+
+    index = _contact_avatar_index()
+    lowered = ident.lower()
+
+    if "@" in lowered:
+        return index.get(f"email:{lowered}")
+
+    for key in _phone_lookup_keys(lowered):
+        image = index.get(key)
+        if image:
+            return image
+
+    return None
+
+
+def _avatar_media_type(image_bytes: bytes) -> str:
+    if image_bytes.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if image_bytes.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    if image_bytes.startswith(b"II*\x00") or image_bytes.startswith(b"MM\x00*"):
+        return "image/tiff"
+    return "application/octet-stream"
 
 
 # --- Auth ---
@@ -334,12 +470,31 @@ async def list_chats() -> list[Chat]:
     return [Chat(**c) for c in data]
 
 
+@app.get("/avatar", dependencies=[Depends(verify_token)])
+async def contact_avatar(identifier: str = Query(min_length=1)) -> Response:
+    image_bytes = await asyncio.to_thread(get_contact_avatar, identifier)
+    if not image_bytes:
+        raise HTTPException(status_code=404, detail="Avatar not found")
+    return Response(content=image_bytes, media_type=_avatar_media_type(image_bytes))
+
+
 @app.get("/history/{chat_id}", dependencies=[Depends(verify_token)])
 async def message_history(chat_id: int, limit: int = Query(default=50, ge=1)) -> list[Message]:
-    data = await run_imsg("history", "--chat-id", str(chat_id), "--json")
+    data = await run_imsg("history", "--chat-id", str(chat_id), "--limit", str(limit), "--json")
     if isinstance(data, dict):
         data = [data]
-    data = data[:limit]
+
+    # Normalize order for clients: oldest -> newest so latest stays at bottom in chat UIs.
+    def _sort_key(msg: dict) -> tuple[int, str]:
+        msg_id = msg.get("id")
+        try:
+            numeric_id = int(msg_id)
+        except (TypeError, ValueError):
+            numeric_id = -1
+        return (numeric_id, str(msg.get("created_at", "")))
+
+    data = sorted(data, key=_sort_key)
+    data = data[-limit:]
     return [Message(**m) for m in data]
 
 

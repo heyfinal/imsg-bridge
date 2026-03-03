@@ -3,7 +3,7 @@ import gi
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 
-from gi.repository import Adw, Gdk, Gtk
+from gi.repository import Adw, Gdk, GLib, Gtk
 
 
 class ChatSidebar(Gtk.Box):
@@ -16,6 +16,7 @@ class ChatSidebar(Gtk.Box):
         self._on_clear_all_requested = None
         self._filter_text = ""
         self._context_row = None
+        self._rows_by_chat_id = {}
 
         header = Adw.HeaderBar()
         header.set_title_widget(Adw.WindowTitle(title="Messages", subtitle=""))
@@ -58,6 +59,7 @@ class ChatSidebar(Gtk.Box):
         self._on_clear_all_requested = callback
 
     def set_chats(self, chats_list):
+        self._rows_by_chat_id = {}
         while True:
             row = self._listbox.get_row_at_index(0)
             if row is None:
@@ -74,17 +76,62 @@ class ChatSidebar(Gtk.Box):
             return row.chat_id
         return None
 
+    @staticmethod
+    def _initials(name_or_identifier: str) -> str:
+        text = (name_or_identifier or "").strip()
+        if not text:
+            return "?"
+
+        cleaned = text.replace("@", " ").replace(".", " ").replace("_", " ")
+        parts = [part for part in cleaned.split() if part]
+        if len(parts) >= 2:
+            return (parts[0][0] + parts[1][0]).upper()
+        return text[:2].upper()
+
+    def set_chat_avatar(self, chat_id, image_bytes):
+        row = self._rows_by_chat_id.get(chat_id)
+        if row is None or not image_bytes:
+            return
+
+        try:
+            texture = Gdk.Texture.new_from_bytes(GLib.Bytes.new(image_bytes))
+        except Exception:
+            return
+
+        row.avatar_image.set_from_paintable(texture)
+        row.avatar_stack.set_visible_child_name("image")
+
     def _make_row(self, chat):
         row = Gtk.ListBoxRow()
         row.chat_id = chat.get("id")
         row.chat_name = chat.get("name") or chat.get("identifier", "")
         row.chat_identifier = chat.get("identifier", "")
+        self._rows_by_chat_id[row.chat_id] = row
 
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
-        box.set_margin_top(8)
-        box.set_margin_bottom(8)
-        box.set_margin_start(12)
-        box.set_margin_end(12)
+        row_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        row_box.set_margin_top(8)
+        row_box.set_margin_bottom(8)
+        row_box.set_margin_start(12)
+        row_box.set_margin_end(12)
+
+        avatar_stack = Gtk.Stack()
+        avatar_stack.set_size_request(36, 36)
+        avatar_stack.set_halign(Gtk.Align.CENTER)
+        avatar_stack.set_valign(Gtk.Align.CENTER)
+        avatar_stack.add_css_class("chat-avatar")
+
+        avatar_initials = Gtk.Label(label=self._initials(row.chat_name))
+        avatar_initials.add_css_class("chat-avatar-initials")
+        avatar_image = Gtk.Image()
+
+        avatar_stack.add_named(avatar_initials, "fallback")
+        avatar_stack.add_named(avatar_image, "image")
+        avatar_stack.set_visible_child_name("fallback")
+        row.avatar_stack = avatar_stack
+        row.avatar_image = avatar_image
+        row_box.append(avatar_stack)
+
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2, hexpand=True)
 
         top_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
 
@@ -109,7 +156,8 @@ class ChatSidebar(Gtk.Box):
             preview_label.add_css_class("chat-row-preview")
             box.append(preview_label)
 
-        row.set_child(box)
+        row_box.append(box)
+        row.set_child(row_box)
         return row
 
     def _filter_func(self, row):

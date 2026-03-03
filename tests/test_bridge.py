@@ -64,7 +64,26 @@ def test_history_limit_is_applied(client: TestClient, monkeypatch: pytest.Monkey
     response = client.get("/history/23?limit=2", headers=AUTH_HEADER)
     assert response.status_code == 200
     assert len(response.json()) == 2
-    assert [item["id"] for item in response.json()] == [1, 2]
+    assert [item["id"] for item in response.json()] == [2, 3]
+
+
+def test_history_descending_input_is_returned_chronological(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def fake_run_imsg(*_args, **_kwargs):
+        # Simulate imsg returning newest-first rows.
+        return [
+            {"id": 200, "guid": "g-200", "chat_id": 23},
+            {"id": 199, "guid": "g-199", "chat_id": 23},
+            {"id": 198, "guid": "g-198", "chat_id": 23},
+        ]
+
+    monkeypatch.setattr(bridge, "run_imsg", fake_run_imsg)
+
+    response = client.get("/history/23?limit=2", headers=AUTH_HEADER)
+    assert response.status_code == 200
+    # Chronological and latest two messages.
+    assert [item["id"] for item in response.json()] == [199, 200]
 
 
 def test_load_state_recovers_from_corrupt_json(
@@ -111,3 +130,25 @@ def test_health_reports_version_even_when_probe_fails(
         "detail": "imsg probe failed",
         "imsg_version": "0.6.1",
     }
+
+
+def test_phone_lookup_keys_normalize_and_add_fallbacks() -> None:
+    keys = bridge._phone_lookup_keys("+1 (405) 315-1310")
+    assert "phone:14053151310" in keys
+    assert "phone:4053151310" in keys
+    assert "phone7:3151310" in keys
+    assert "phone4:1310" in keys
+
+
+def test_decode_contact_image_blob_external_pointer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    image_name = "ABCD1234-1111-2222-3333-ABCDEFABCDEF"
+    image_bytes = b"\xff\xd8\xff\xdbfakejpg"
+    (tmp_path / image_name).write_bytes(image_bytes)
+
+    monkeypatch.setattr(bridge, "ADDRESSBOOK_EXTERNAL_DATA", tmp_path)
+    pointer_blob = b"\x02" + image_name.encode() + b"\x00"
+
+    decoded = bridge._decode_contact_image_blob(pointer_blob)
+    assert decoded == image_bytes

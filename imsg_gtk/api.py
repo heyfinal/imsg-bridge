@@ -44,6 +44,14 @@ class BridgeClient:
             resp.raise_for_status()
             return await resp.json()
 
+    async def get_avatar(self, identifier: str) -> bytes | None:
+        session = await self._get_session()
+        async with session.get(f"{self.base_url}/avatar", params={"identifier": identifier}) as resp:
+            if resp.status == 404:
+                return None
+            resp.raise_for_status()
+            return await resp.read()
+
     async def send_message(self, to: str, text: str) -> dict:
         session = await self._get_session()
         async with session.post(

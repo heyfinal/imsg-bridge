@@ -54,6 +54,8 @@ class ImsgWindow(Adw.ApplicationWindow):
         for chat in chats:
             self._chats[chat["id"]] = chat
         self._sidebar.set_chats(chats)
+        for chat in chats:
+            self._load_avatar(chat)
 
     def _on_chat_selected(self, chat_id):
         self._current_chat_id = chat_id
@@ -134,3 +136,19 @@ class ImsgWindow(Adw.ApplicationWindow):
             self._sidebar.set_chats([])
             self._chatview.set_chat(None, "Messages", [])
         dialog.close()
+
+    def _load_avatar(self, chat):
+        identifier = (chat.get("identifier") or "").strip()
+        chat_id = chat.get("id")
+        if not identifier or chat_id is None:
+            return
+
+        async def _fetch():
+            try:
+                avatar = await self._client.get_avatar(identifier)
+            except Exception:
+                return
+            if avatar:
+                self._bridge.call_in_gtk(self._sidebar.set_chat_avatar, chat_id, avatar)
+
+        self._bridge.run_coroutine(_fetch())
