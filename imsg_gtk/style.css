@@ -1,0 +1,52 @@
+.message-bubble {
+    padding: 8px 12px;
+    border-radius: 16px;
+    margin: 2px 8px;
+}
+
+.message-outgoing {
+    background-color: #007AFF;
+    color: white;
+    margin-left: 64px;
+}
+
+.message-incoming {
+    background-color: @card_bg_color;
+    color: @card_fg_color;
+    margin-right: 64px;
+}
+
+.message-text {
+    font-size: 15px;
+}
+
+.message-time {
+    font-size: 11px;
+    opacity: 0.6;
+}
+
+.compose-bar {
+    padding: 8px;
+    border-top: 1px solid @borders;
+}
+
+.compose-entry {
+    border-radius: 18px;
+    padding: 8px 16px;
+    min-height: 36px;
+}
+
+.chat-row-name {
+    font-weight: bold;
+    font-size: 14px;
+}
+
+.chat-row-preview {
+    font-size: 12px;
+    opacity: 0.7;
+}
+
+.chat-row-time {
+    font-size: 11px;
+    opacity: 0.5;
+}
