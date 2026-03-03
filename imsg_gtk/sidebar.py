@@ -101,6 +101,16 @@ class ChatSidebar(Gtk.Box):
         row.avatar_image.set_from_paintable(texture)
         row.avatar_stack.set_visible_child_name("image")
 
+    def set_chat_display_name(self, chat_id, name):
+        row = self._rows_by_chat_id.get(chat_id)
+        if row is None or not name:
+            return
+        row.chat_name = name
+        if hasattr(row, "name_label"):
+            row.name_label.set_label(name)
+        if hasattr(row, "avatar_initials_label"):
+            row.avatar_initials_label.set_label(self._initials(name))
+
     def _make_row(self, chat):
         row = Gtk.ListBoxRow()
         row.chat_id = chat.get("id")
@@ -122,6 +132,7 @@ class ChatSidebar(Gtk.Box):
 
         avatar_initials = Gtk.Label(label=self._initials(row.chat_name))
         avatar_initials.add_css_class("chat-avatar-initials")
+        row.avatar_initials_label = avatar_initials
         avatar_image = Gtk.Image()
 
         avatar_stack.add_named(avatar_initials, "fallback")
@@ -138,6 +149,7 @@ class ChatSidebar(Gtk.Box):
         name_label = Gtk.Label(label=row.chat_name, xalign=0, hexpand=True)
         name_label.set_ellipsize(3)  # PANGO_ELLIPSIZE_END
         name_label.add_css_class("chat-row-name")
+        row.name_label = name_label
         top_row.append(name_label)
 
         time_str = chat.get("last_message_at", "")

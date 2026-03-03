@@ -152,3 +152,129 @@ def test_decode_contact_image_blob_external_pointer(
 
     decoded = bridge._decode_contact_image_blob(pointer_blob)
     assert decoded == image_bytes
+
+
+# --- New feature tests ---
+
+
+def test_ping_does_not_require_auth(client: TestClient) -> None:
+    response = client.get("/ping")
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok"}
+
+
+def test_ping_ignores_auth_header(client: TestClient) -> None:
+    response = client.get("/ping", headers={"Authorization": "Bearer wrong"})
+    assert response.status_code == 200
+
+
+def test_configurable_imsg_path(monkeypatch: pytest.MonkeyPatch) -> None:
+    import importlib
+
+    import imsg_bridge.bridge as b
+
+    monkeypatch.setenv("IMSG_PATH", "/custom/path/imsg")
+    importlib.reload(b)
+    assert b.IMSG == "/custom/path/imsg"
+
+    monkeypatch.delenv("IMSG_PATH", raising=False)
+    importlib.reload(b)
+    # Falls back to shutil.which or hardcoded default
+    assert b.IMSG is not None
+
+
+def test_format_display_name() -> None:
+    assert bridge._format_display_name("John", "Doe", "Acme") == "John Doe"
+    assert bridge._format_display_name("John", None, None) == "John"
+    assert bridge._format_display_name(None, "Doe", None) == "Doe"
+    assert bridge._format_display_name(None, None, "Acme") == "Acme"
+    assert bridge._format_display_name(None, None, None) == ""
+
+
+def test_contact_name_returns_404_for_unknown(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(bridge, "_contact_name_index", lambda: {})
+    response = client.get("/contact-name?identifier=%2B15550000000", headers=AUTH_HEADER)
+    assert response.status_code == 404
+
+
+def test_contact_name_resolves_known_contact(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        bridge,
+        "_contact_name_index",
+        lambda: {"phone:15551234567": "Jane Smith"},
+    )
+    response = client.get("/contact-name?identifier=%2B15551234567", headers=AUTH_HEADER)
+    assert response.status_code == 200
+    assert response.json()["name"] == "Jane Smith"
+
+
+def test_rate_limiter_allows_within_limit() -> None:
+    import asyncio
+
+    async def _run():
+        limiter = bridge.SlidingWindowLimiter(max_requests=3, window_seconds=60.0)
+        for _ in range(3):
+            allowed, _, _ = await limiter.check()
+            assert allowed is True
+        allowed, _, retry_after = await limiter.check()
+        assert allowed is False
+        assert retry_after > 0
+
+    asyncio.run(_run())
+
+
+def test_send_rate_limited(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    async def fake_run_imsg(*_args, **_kwargs):
+        return {"status": "sent"}
+
+    monkeypatch.setattr(bridge, "run_imsg", fake_run_imsg)
+
+    # Reset the limiter for this test
+    bridge.send_limiter._timestamps.clear()
+
+    for i in range(20):
+        response = client.post(
+            "/send",
+            json={"to": "+15551234567", "text": f"msg {i}"},
+            headers=AUTH_HEADER,
+        )
+        assert response.status_code == 200, f"Request {i} should succeed"
+
+    response = client.post(
+        "/send",
+        json={"to": "+15551234567", "text": "too many"},
+        headers=AUTH_HEADER,
+    )
+    assert response.status_code == 429
+    assert "Retry-After" in response.headers
+
+
+def test_avatar_cache_ttl(monkeypatch: pytest.MonkeyPatch) -> None:
+    import time
+
+    call_count = 0
+
+    def fake_build():
+        nonlocal call_count
+        call_count += 1
+        return {"phone:1234": b"img"}, {"phone:1234": "Test"}
+
+    monkeypatch.setattr(bridge, "_build_contact_index", fake_build)
+    monkeypatch.setattr(bridge, "_avatar_cache_time", 0.0)
+    monkeypatch.setattr(bridge, "_name_cache_time", 0.0)
+
+    bridge._contact_avatar_index()
+    assert call_count == 1
+
+    # Second call within TTL should not rebuild
+    bridge._contact_avatar_index()
+    assert call_count == 1
+
+    # Simulate TTL expiry
+    monkeypatch.setattr(bridge, "_avatar_cache_time", time.monotonic() - 400)
+    bridge._contact_avatar_index()
+    assert call_count == 2

@@ -13,6 +13,7 @@ class ImsgWindow(Adw.ApplicationWindow):
     def __init__(self, application, async_bridge, client):
         super().__init__(application=application, default_width=900, default_height=700)
 
+        self._app = application
         self._bridge = async_bridge
         self._client = client
         self._chats = {}
@@ -56,11 +57,12 @@ class ImsgWindow(Adw.ApplicationWindow):
         self._sidebar.set_chats(chats)
         for chat in chats:
             self._load_avatar(chat)
+            self._load_contact_name(chat)
 
     def _on_chat_selected(self, chat_id):
         self._current_chat_id = chat_id
         chat = self._chats.get(chat_id, {})
-        chat_name = chat.get("name") or chat.get("identifier", "")
+        chat_name = chat.get("display_name") or chat.get("name") or chat.get("identifier", "")
 
         async def _fetch():
             messages = await self._client.get_history(chat_id)
@@ -82,23 +84,37 @@ class ImsgWindow(Adw.ApplicationWindow):
         })
 
         async def _do_send():
-            await self._client.send_message(to=identifier, text=text)
+            try:
+                await self._client.send_message(to=identifier, text=text)
+            except Exception:
+                self._bridge.call_in_gtk(self._chatview.mark_last_bubble_failed)
 
         self._bridge.run_coroutine(_do_send())
 
     def _start_ws(self):
         async def _connect():
-            await self._client.connect_ws(self._on_ws_message)
+            await self._client.connect_ws(self._on_ws_message, self._on_ws_status)
 
         self._bridge.run_coroutine(_connect())
 
     def _on_ws_message(self, msg):
         self._bridge.call_in_gtk(self._handle_ws_message, msg)
 
+    def _on_ws_status(self, ws_status):
+        self._bridge.call_in_gtk(self._chatview.set_connection_status, ws_status)
+
     def _handle_ws_message(self, msg):
         chat_id = msg.get("chat_id")
         if chat_id == self._current_chat_id:
             self._chatview.append_message(msg)
+
+        if not msg.get("is_from_me", False):
+            sender = msg.get("sender") or ""
+            chat = self._chats.get(chat_id, {})
+            display = chat.get("display_name") or chat.get("name") or sender
+            if hasattr(self._app, "send_notification_message"):
+                self._app.send_notification_message(display, msg.get("text", ""))
+
         self._load_chats()
 
     def _clear_conversation(self, chat_id):
@@ -152,3 +168,27 @@ class ImsgWindow(Adw.ApplicationWindow):
                 self._bridge.call_in_gtk(self._sidebar.set_chat_avatar, chat_id, avatar)
 
         self._bridge.run_coroutine(_fetch())
+
+    def _load_contact_name(self, chat):
+        identifier = (chat.get("identifier") or "").strip()
+        chat_id = chat.get("id")
+        if not identifier or chat_id is None:
+            return
+        if chat.get("display_name"):
+            return
+
+        async def _fetch():
+            try:
+                name = await self._client.get_contact_name(identifier)
+            except Exception:
+                return
+            if name:
+                self._bridge.call_in_gtk(self._apply_contact_name, chat_id, name)
+
+        self._bridge.run_coroutine(_fetch())
+
+    def _apply_contact_name(self, chat_id, name):
+        chat = self._chats.get(chat_id)
+        if chat:
+            chat["display_name"] = name
+            self._sidebar.set_chat_display_name(chat_id, name)

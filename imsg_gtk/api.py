@@ -52,6 +52,15 @@ class BridgeClient:
             resp.raise_for_status()
             return await resp.read()
 
+    async def get_contact_name(self, identifier: str) -> str | None:
+        session = await self._get_session()
+        async with session.get(f"{self.base_url}/contact-name", params={"identifier": identifier}) as resp:
+            if resp.status == 404:
+                return None
+            resp.raise_for_status()
+            data = await resp.json()
+            return data.get("name")
+
     async def send_message(self, to: str, text: str) -> dict:
         session = await self._get_session()
         async with session.post(
@@ -66,16 +75,21 @@ class BridgeClient:
             resp.raise_for_status()
             return await resp.json()
 
-    async def connect_ws(self, on_message) -> None:
+    async def connect_ws(self, on_message, on_status_change=None) -> None:
         backoff = 1
         max_backoff = 30
         while True:
             try:
+                if on_status_change:
+                    on_status_change("connecting")
                 session = await self._get_session()
-                ws_url = f"ws://{self.host}:{self.port}/ws?token={self.token}"
-                async with session.ws_connect(ws_url) as ws:
+                ws_url = f"ws://{self.host}:{self.port}/ws"
+                ws_headers = {"Authorization": f"Bearer {self.token}"}
+                async with session.ws_connect(ws_url, headers=ws_headers) as ws:
                     backoff = 1
-                    log.info("WebSocket connected to %s", ws_url)
+                    log.info("WebSocket connected")
+                    if on_status_change:
+                        on_status_change("connected")
                     async for msg in ws:
                         if msg.type == aiohttp.WSMsgType.TEXT:
                             on_message(msg.json())
@@ -90,9 +104,13 @@ class BridgeClient:
                             break
             except asyncio.CancelledError:
                 log.info("WebSocket connection cancelled")
+                if on_status_change:
+                    on_status_change("disconnected")
                 return
             except Exception as exc:
                 log.warning("WebSocket disconnected: %s, reconnecting in %ds", exc, backoff)
+            if on_status_change:
+                on_status_change("reconnecting")
             await asyncio.sleep(backoff)
             backoff = min(backoff * 2, max_backoff)
 

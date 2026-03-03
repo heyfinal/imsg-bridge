@@ -1,14 +1,17 @@
 import asyncio
+import collections
 import getpass
 import hmac
 import json
 import logging
 import os
 import re
+import shutil
 import signal
 import sqlite3
 import subprocess
 import sys
+import time
 from contextlib import asynccontextmanager
 from functools import lru_cache
 from pathlib import Path
@@ -34,7 +37,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger("imessage-bridge")
 
-IMSG = "/opt/homebrew/bin/imsg"
+IMSG = os.getenv("IMSG_PATH") or shutil.which("imsg") or "/opt/homebrew/bin/imsg"
 STATE_DIR = Path.home() / ".imessage-bridge"
 STATE_FILE = STATE_DIR / "state.json"
 ADDRESSBOOK_DB = Path.home() / "Library" / "Application Support" / "AddressBook" / "AddressBook-v22.abcddb"
@@ -87,16 +90,25 @@ def _decode_contact_image_blob(blob: bytes | None) -> bytes | None:
     return bytes(blob)
 
 
-@lru_cache(maxsize=1)
-def _contact_avatar_index() -> dict[str, bytes]:
-    index: dict[str, bytes] = {}
+_avatar_cache: dict[str, bytes] = {}
+_avatar_cache_time: float = 0.0
+_AVATAR_TTL = 300.0  # 5 minutes
+
+_name_cache: dict[str, str] = {}
+_name_cache_time: float = 0.0
+_NAME_TTL = 300.0
+
+
+def _build_contact_index() -> tuple[dict[str, bytes], dict[str, str]]:
+    avatar_index: dict[str, bytes] = {}
+    name_index: dict[str, str] = {}
     if not ADDRESSBOOK_DB.exists():
-        return index
+        return avatar_index, name_index
 
     try:
         conn = sqlite3.connect(f"file:{ADDRESSBOOK_DB}?mode=ro", uri=True)
     except sqlite3.Error:
-        return index
+        return avatar_index, name_index
 
     try:
         phone_rows = conn.execute(
@@ -104,45 +116,93 @@ def _contact_avatar_index() -> dict[str, bytes]:
             SELECT
               p.ZFULLNUMBER,
               p.ZLASTFOURDIGITS,
-              COALESCE(r.ZTHUMBNAILIMAGEDATA, r.ZIMAGEDATA) AS IMAGE_BLOB
+              COALESCE(r.ZTHUMBNAILIMAGEDATA, r.ZIMAGEDATA) AS IMAGE_BLOB,
+              r.ZFIRSTNAME,
+              r.ZLASTNAME,
+              r.ZORGANIZATION
             FROM ZABCDPHONENUMBER p
             JOIN ZABCDRECORD r ON (p.ZOWNER = r.Z_PK OR p.Z22_OWNER = r.Z_PK)
-            WHERE COALESCE(r.ZTHUMBNAILIMAGEDATA, r.ZIMAGEDATA) IS NOT NULL
             """
         )
-        for full_number, last_four, image_blob in phone_rows:
+        for full_number, last_four, image_blob, first, last, org in phone_rows:
+            display_name = _format_display_name(first, last, org)
             image = _decode_contact_image_blob(image_blob)
-            if not image:
-                continue
 
             for key in _phone_lookup_keys(full_number or ""):
-                index.setdefault(key, image)
+                if image:
+                    avatar_index.setdefault(key, image)
+                if display_name:
+                    name_index.setdefault(key, display_name)
 
             if last_four:
                 digits = _normalize_phone(last_four)
                 if digits:
-                    index.setdefault(f"phone4:{digits[-4:]}", image)
+                    k = f"phone4:{digits[-4:]}"
+                    if image:
+                        avatar_index.setdefault(k, image)
+                    if display_name:
+                        name_index.setdefault(k, display_name)
 
         email_rows = conn.execute(
             """
             SELECT
               LOWER(e.ZADDRESS),
-              COALESCE(r.ZTHUMBNAILIMAGEDATA, r.ZIMAGEDATA) AS IMAGE_BLOB
+              COALESCE(r.ZTHUMBNAILIMAGEDATA, r.ZIMAGEDATA) AS IMAGE_BLOB,
+              r.ZFIRSTNAME,
+              r.ZLASTNAME,
+              r.ZORGANIZATION
             FROM ZABCDEMAILADDRESS e
             JOIN ZABCDRECORD r ON (e.ZOWNER = r.Z_PK OR e.Z22_OWNER = r.Z_PK)
-            WHERE COALESCE(r.ZTHUMBNAILIMAGEDATA, r.ZIMAGEDATA) IS NOT NULL
             """
         )
-        for email, image_blob in email_rows:
+        for email, image_blob, first, last, org in email_rows:
+            if not email:
+                continue
+            display_name = _format_display_name(first, last, org)
             image = _decode_contact_image_blob(image_blob)
-            if image and email:
-                index.setdefault(f"email:{email}", image)
+            k = f"email:{email}"
+            if image:
+                avatar_index.setdefault(k, image)
+            if display_name:
+                name_index.setdefault(k, display_name)
     except sqlite3.Error:
-        logger.debug("Failed to query AddressBook avatar index", exc_info=True)
+        logger.debug("Failed to query AddressBook contact index", exc_info=True)
     finally:
         conn.close()
 
-    return index
+    return avatar_index, name_index
+
+
+def _format_display_name(first: str | None, last: str | None, org: str | None) -> str:
+    if first and last:
+        return f"{first} {last}"
+    if first:
+        return first
+    if last:
+        return last
+    if org:
+        return org
+    return ""
+
+
+def _contact_avatar_index() -> dict[str, bytes]:
+    global _avatar_cache, _avatar_cache_time, _name_cache, _name_cache_time
+    now = time.monotonic()
+    if now - _avatar_cache_time > _AVATAR_TTL:
+        _avatar_cache, _name_cache = _build_contact_index()
+        _avatar_cache_time = now
+        _name_cache_time = now
+    return _avatar_cache
+
+
+def _contact_name_index() -> dict[str, str]:
+    global _avatar_cache, _avatar_cache_time, _name_cache, _name_cache_time
+    now = time.monotonic()
+    if now - _name_cache_time > _NAME_TTL:
+        _avatar_cache, _name_cache = _build_contact_index()
+        _avatar_cache_time = now
+        _name_cache_time = now
+    return _name_cache
 
 
 def get_contact_avatar(identifier: str) -> bytes | None:
@@ -160,6 +220,25 @@ def get_contact_avatar(identifier: str) -> bytes | None:
         image = index.get(key)
         if image:
             return image
+
+    return None
+
+
+def get_contact_name(identifier: str) -> str | None:
+    ident = identifier.strip()
+    if not ident:
+        return None
+
+    index = _contact_name_index()
+    lowered = ident.lower()
+
+    if "@" in lowered:
+        return index.get(f"email:{lowered}")
+
+    for key in _phone_lookup_keys(lowered):
+        name = index.get(key)
+        if name:
+            return name
 
     return None
 
@@ -294,9 +373,18 @@ async def run_imsg(*args: str, timeout: float = 30.0) -> dict | list:
     try:
         stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
     except asyncio.TimeoutError:
+        partial_stderr = b""
+        if proc.stderr:
+            try:
+                partial_stderr = await asyncio.wait_for(proc.stderr.read(4096), timeout=0.1)
+            except (asyncio.TimeoutError, Exception):
+                pass
         proc.kill()
         await proc.wait()
-        raise HTTPException(status_code=504, detail="imsg command timed out")
+        detail = "imsg command timed out"
+        if partial_stderr:
+            detail += f": {partial_stderr.decode(errors='replace').strip()}"
+        raise HTTPException(status_code=504, detail=detail)
 
     if proc.returncode != 0:
         err = stderr.decode().strip()
@@ -431,6 +519,42 @@ class SubprocessManager:
         return "\n".join(chunks)
 
 
+# --- Rate Limiting ---
+
+class SlidingWindowLimiter:
+    def __init__(self, max_requests: int, window_seconds: float):
+        self.max_requests = max_requests
+        self.window_seconds = window_seconds
+        self._timestamps: collections.deque[float] = collections.deque()
+        self._lock = asyncio.Lock()
+
+    async def check(self) -> tuple[bool, int, int]:
+        async with self._lock:
+            now = time.monotonic()
+            cutoff = now - self.window_seconds
+            while self._timestamps and self._timestamps[0] < cutoff:
+                self._timestamps.popleft()
+            remaining = max(self.max_requests - len(self._timestamps), 0)
+            if len(self._timestamps) < self.max_requests:
+                self._timestamps.append(now)
+                return True, remaining - 1, 0
+            retry_after = int(self._timestamps[0] + self.window_seconds - now) + 1
+            return False, 0, retry_after
+
+
+send_limiter = SlidingWindowLimiter(max_requests=20, window_seconds=60.0)
+
+
+async def rate_limit_send(request: Request) -> None:
+    allowed, remaining, retry_after = await send_limiter.check()
+    if not allowed:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Rate limit exceeded",
+            headers={"Retry-After": str(retry_after)},
+        )
+
+
 # --- App ---
 
 manager = SubprocessManager()
@@ -453,7 +577,12 @@ async def lifespan(_app: FastAPI):
 app = FastAPI(title="iMessage Bridge", version="0.1.0", lifespan=lifespan)
 
 
-@app.post("/send", dependencies=[Depends(verify_token)])
+@app.get("/ping")
+async def ping() -> JSONResponse:
+    return JSONResponse(content={"status": "ok"})
+
+
+@app.post("/send", dependencies=[Depends(verify_token), Depends(rate_limit_send)])
 async def send_message(req: SendRequest) -> JSONResponse:
     args = ["send", "--to", req.to, "--text", req.text, "--json"]
     if req.file:
@@ -476,6 +605,14 @@ async def contact_avatar(identifier: str = Query(min_length=1)) -> Response:
     if not image_bytes:
         raise HTTPException(status_code=404, detail="Avatar not found")
     return Response(content=image_bytes, media_type=_avatar_media_type(image_bytes))
+
+
+@app.get("/contact-name", dependencies=[Depends(verify_token)])
+async def contact_name(identifier: str = Query(min_length=1)) -> JSONResponse:
+    name = await asyncio.to_thread(get_contact_name, identifier)
+    if not name:
+        raise HTTPException(status_code=404, detail="Contact not found")
+    return JSONResponse(content={"identifier": identifier, "name": name})
 
 
 @app.get("/history/{chat_id}", dependencies=[Depends(verify_token)])

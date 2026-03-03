@@ -24,9 +24,21 @@ class AsyncBridge:
         self._loop.run_forever()
 
     def stop(self):
-        self._loop.call_soon_threadsafe(self._loop.stop)
+        if self._loop.is_running():
+            future = asyncio.run_coroutine_threadsafe(self._cleanup(), self._loop)
+            try:
+                future.result(timeout=5)
+            except Exception:
+                pass
+            self._loop.call_soon_threadsafe(self._loop.stop)
         if self._thread:
             self._thread.join(timeout=5)
+
+    async def _cleanup(self):
+        tasks = [t for t in asyncio.all_tasks(self._loop) if t is not asyncio.current_task()]
+        for t in tasks:
+            t.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
 
     def run_coroutine(self, coro):
         return asyncio.run_coroutine_threadsafe(coro, self._loop)

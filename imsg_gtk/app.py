@@ -6,7 +6,7 @@ import gi
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 
-from gi.repository import Adw, Gdk, Gtk
+from gi.repository import Adw, Gdk, Gio, Gtk
 
 from imsg_gtk import config
 from imsg_gtk.api import BridgeClient
@@ -54,9 +54,18 @@ class ImsgApp(Adw.Application):
         self._window.present()
 
     def do_shutdown(self):
+        if self._client and self._bridge:
+            self._bridge.run_coroutine(self._client.close())
         if self._bridge:
             self._bridge.stop()
         Adw.Application.do_shutdown(self)
+
+    def send_notification_message(self, sender, text):
+        if self._window and self._window.is_active():
+            return
+        notification = Gio.Notification.new(sender or "iMessage")
+        notification.set_body(text or "")
+        self.send_notification("imsg-incoming", notification)
 
     def _load_css(self):
         css_path = Path(__file__).parent / "style.css"

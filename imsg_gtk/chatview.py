@@ -15,6 +15,11 @@ class ChatView(Gtk.Box):
         self._on_send = None
         self._chat_id = None
         self._chat_name = None
+        self._last_bubble = None
+
+        self._banner = Adw.Banner.new("Reconnecting to iMessage bridge...")
+        self._banner.set_revealed(False)
+        self.append(self._banner)
 
         self._header = Adw.HeaderBar()
         self._title = Adw.WindowTitle(title="Messages", subtitle="")
@@ -51,8 +56,22 @@ class ChatView(Gtk.Box):
         self._chat_name = name
         self._title.set_title(name or "Messages")
 
+    def set_connection_status(self, status):
+        if status == "connected":
+            self._banner.set_revealed(False)
+        elif status == "reconnecting":
+            self._banner.set_title("Reconnecting to iMessage bridge...")
+            self._banner.set_revealed(True)
+        elif status == "connecting":
+            self._banner.set_title("Connecting to iMessage bridge...")
+            self._banner.set_revealed(True)
+        elif status == "disconnected":
+            self._banner.set_title("Disconnected from iMessage bridge")
+            self._banner.set_revealed(True)
+
     def set_chat(self, chat_id, chat_name, messages):
         self._chat_id = chat_id
+        self._last_bubble = None
         self.set_chat_name(chat_name)
         self.clear()
         for msg in messages:
@@ -61,6 +80,7 @@ class ChatView(Gtk.Box):
                 is_from_me=msg.get("is_from_me", False),
                 timestamp=msg.get("created_at", ""),
                 sender=msg.get("sender"),
+                attachments=msg.get("attachments"),
             )
             self._listbox.append(bubble)
         self._scroll_to_bottom()
@@ -71,11 +91,19 @@ class ChatView(Gtk.Box):
             is_from_me=msg_dict.get("is_from_me", False),
             timestamp=msg_dict.get("created_at", ""),
             sender=msg_dict.get("sender"),
+            attachments=msg_dict.get("attachments"),
         )
         self._listbox.append(bubble)
+        self._last_bubble = bubble
         self._scroll_to_bottom()
+        return bubble
+
+    def mark_last_bubble_failed(self):
+        if self._last_bubble:
+            self._last_bubble.mark_failed()
 
     def clear(self):
+        self._last_bubble = None
         while True:
             row = self._listbox.get_row_at_index(0)
             if row is None:

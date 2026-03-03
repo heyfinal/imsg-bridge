@@ -155,6 +155,32 @@ curl http://127.0.0.1:5100/health \
 
 Returns `{"status": "ok", "imsg_version": "<detected-version>"}` when everything is working.
 
+### Ping (unauthenticated)
+
+```bash
+curl http://127.0.0.1:5100/ping
+```
+
+Returns `{"status": "ok"}` — useful for monitoring, load balancers, and launchd health checks.
+
+### Resolve contact name
+
+```bash
+curl "http://127.0.0.1:5100/contact-name?identifier=%2B15551234567" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+Returns `{"identifier": "+15551234567", "name": "John Doe"}` from the macOS Contacts database.
+
+### Get contact avatar
+
+```bash
+curl "http://127.0.0.1:5100/avatar?identifier=%2B15551234567" \
+  -H "Authorization: Bearer $TOKEN" --output avatar.jpg
+```
+
+Returns the contact's photo as `image/jpeg`, `image/png`, or `image/tiff`.
+
 ## WebSocket
 
 Connect to `/ws` for a real-time stream of incoming messages:
@@ -232,14 +258,65 @@ imsg CLI (/opt/homebrew/bin/imsg)
 - **State persistence** tracks the last processed message ROWID in `~/.imessage-bridge/state.json` so no messages are lost across restarts
 - **Auth** uses a bearer token stored in macOS Keychain — no config files with secrets
 
+## Linux Client (imsg-gtk)
+
+A native GTK4/libadwaita desktop app for reading and sending iMessages from Linux over your LAN.
+
+### Features
+
+- Real-time message streaming via WebSocket
+- Contact name resolution and avatar display from macOS Contacts
+- Inline image attachments
+- Desktop notifications for incoming messages (when window is not focused)
+- Reconnection banner with automatic retry
+- Send failure indicator with visual feedback
+- Search/filter conversations
+- Right-click context menu (open, copy contact, clear)
+- Dark mode support via libadwaita
+
+### Requirements
+
+- Linux with GTK 4.10+, libadwaita 1.3+
+- Python 3.12+ with PyGObject
+- Network access to the Mac running imsg-bridge
+
+### Deploy
+
+The easiest way is via `setup.sh` on the Mac, which offers SSH push or USB copy:
+
+```bash
+./setup.sh --deploy-ssh user@linux-machine
+./setup.sh --deploy-usb /Volumes/USB
+```
+
+Or install manually on Linux:
+
+```bash
+cd imsg_gtk
+pip install -e .
+imsg-gtk
+```
+
+Configuration is stored in `~/.config/imsg-gtk/config.json`:
+
+```json
+{
+  "host": "192.168.1.100",
+  "port": 5100,
+  "token": "your-bearer-token"
+}
+```
+
 ## Security
 
 - Setup supports both bind modes:
   - `127.0.0.1` local-only
   - `0.0.0.0` LAN-accessible (required for direct Linux client access)
-- Bearer token required on all endpoints (REST and WebSocket)
+- Bearer token required on all endpoints (REST and WebSocket) except `/ping`
 - Token stored in macOS Keychain, never on disk
 - Uses constant-time token comparison for auth checks
+- Rate limiting on `/send` (20 requests/minute sliding window)
+- `imsg` binary path configurable via `IMSG_PATH` environment variable
 - For remote access, use [Tailscale](https://tailscale.com) or an SSH tunnel
 
 ## Development

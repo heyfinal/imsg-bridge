@@ -62,3 +62,18 @@
     font-size: 12px;
     font-weight: 700;
 }
+
+.error-bubble {
+    border: 1px solid @error_color;
+    opacity: 0.8;
+}
+
+.error-bubble .error {
+    color: @error_color;
+}
+
+.attachment-image {
+    border-radius: 12px;
+    margin-bottom: 4px;
+    max-width: 250px;
+}
