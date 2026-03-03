@@ -21,30 +21,8 @@ RESET="\033[0m"
 
 build_ai_install_prompt() {
     local agent="${1:-codex}"
-    local install_dir="${IMSG_BRIDGE_DIR:-$HOME/.imsg-bridge}"
-    cat <<EOF
-You are helping me install and configure imsg-bridge on this macOS machine.
-
-Use these requirements:
-1. Clone or update https://github.com/heyfinal/imsg-bridge.git into ${install_dir}
-2. Ensure Python 3.12+ is available
-3. Ensure the imsg CLI exists at /opt/homebrew/bin/imsg
-4. Run:
-   cd ${install_dir}
-   ./setup.sh
-5. Choose LAN bind mode unless I request localhost-only
-6. Verify launchd service com.imsg-bridge is running
-7. Verify health endpoint with bearer token from Keychain
-8. If Messages DB access is blocked, walk me through Full Disk Access
-9. Optionally deploy Linux client with setup.sh --deploy
-
-While doing this:
-- Show each command before running it
-- Stop and ask before any destructive operation
-- Summarize final bridge URL, token location, and service status
-
-Target assistant: ${agent}
-EOF
+    local repo_url="https://github.com/heyfinal/imsg-bridge.git"
+    echo "${agent} install ${repo_url}"
 }
 
 do_ai_prompt() {
