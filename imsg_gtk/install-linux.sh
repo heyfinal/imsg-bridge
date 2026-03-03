@@ -108,7 +108,7 @@ DESKTOP_ICON="chat"
 if [[ -f "$INSTALL_DIR/imsg_gtk/icon.svg" ]]; then
     mkdir -p "$ICON_DIR"
     cp "$INSTALL_DIR/imsg_gtk/icon.svg" "$ICON_DIR/imsg-gtk.svg"
-    DESKTOP_ICON="imsg-gtk"
+    DESKTOP_ICON="$ICON_DIR/imsg-gtk.svg"
 fi
 
 # Create .desktop entry
