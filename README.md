@@ -55,12 +55,24 @@ codex exec "Install, configure, test, and optionally deploy imsg-bridge from htt
 gemini -p "Install, configure, test, and optionally deploy imsg-bridge from https://github.com/heyfinal/imsg-bridge.git on this macOS machine."
 ```
 
-If you already have the repo locally, generate a tool-specific prompt and copy it to clipboard:
+If you already have the repo locally, generate a tool-specific one-liner and copy it to clipboard:
 
 ```bash
 ./setup.sh --ai-prompt codex
 # or: ./setup.sh --ai-prompt claude
 # or: ./setup.sh --ai-prompt gemini
+```
+
+If you are already inside an interactive AI terminal, generate a plain copy/paste task prompt:
+
+```bash
+./setup.sh --ai-task
+```
+
+Paste this inside Claude/Codex/Gemini interactive mode:
+
+```text
+Install, configure, test, and optionally deploy imsg-bridge from https://github.com/heyfinal/imsg-bridge.git on this macOS machine.
 ```
 
 ### Manual one-liner (no package manager needed)

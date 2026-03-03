@@ -19,17 +19,39 @@ CYAN="\033[36m"
 YELLOW="\033[33m"
 RESET="\033[0m"
 
-build_ai_install_prompt() {
-    local agent="${1:-codex}"
+build_ai_task_prompt() {
     local repo_url="https://github.com/heyfinal/imsg-bridge.git"
     local install_dir="${IMSG_BRIDGE_DIR:-$HOME/.imsg-bridge}"
+    echo "Install, configure, test, and optionally deploy imsg-bridge from ${repo_url} on this macOS machine: clone or update into ${install_dir}; cd ${install_dir}; run ./setup.sh; verify launchd service com.imsg-bridge is running; verify /health using bearer token from Keychain; if chat.db access fails, guide Full Disk Access and re-test; optionally run ./setup.sh --deploy to deploy the Linux client."
+}
+
+build_ai_install_prompt() {
+    local agent="${1:-codex}"
     local task
-    task="Install, configure, test, and optionally deploy imsg-bridge from ${repo_url} on this macOS machine: clone or update into ${install_dir}; cd ${install_dir}; run ./setup.sh; verify launchd service com.imsg-bridge is running; verify /health using bearer token from Keychain; if chat.db access fails, guide Full Disk Access and re-test; optionally run ./setup.sh --deploy to deploy the Linux client."
+    task="$(build_ai_task_prompt)"
     case "$agent" in
         claude) echo "claude -p \"${task}\"" ;;
         codex) echo "codex exec \"${task}\"" ;;
         gemini) echo "gemini -p \"${task}\"" ;;
     esac
+}
+
+do_ai_task_prompt() {
+    local prompt
+    prompt="$(build_ai_task_prompt)"
+
+    echo ""
+    echo -e "${BOLD}AI Interactive Prompt${RESET}"
+    echo ""
+    echo "$prompt"
+    echo ""
+
+    if command -v pbcopy &>/dev/null; then
+        printf "%s" "$prompt" | pbcopy
+        echo "Prompt copied to clipboard."
+    else
+        echo "pbcopy not found; copy the prompt manually."
+    fi
 }
 
 do_ai_prompt() {
@@ -803,6 +825,9 @@ case "${1:-}" in
     --ai-prompt|--ai-install)
         do_ai_prompt "${2:-}"
         ;;
+    --ai-task|--ai-interactive)
+        do_ai_task_prompt
+        ;;
     --deploy-usb)
         if [[ -z "${2:-}" ]]; then
             echo "Usage: ./setup.sh --deploy-usb <path>"
@@ -828,6 +853,7 @@ case "${1:-}" in
         echo ""
         echo "  (no args)               Install bridge + optional deploy"
         echo "  --ai-prompt [assistant] Print/copy AI install prompt (codex|claude|gemini)"
+        echo "  --ai-task               Print/copy prompt for interactive AI terminals"
         echo "  --deploy                 Interactive deploy menu"
         echo "  --deploy-ssh user@host   Push client to Linux via SSH"
         echo "  --deploy-usb /path       Copy client package to USB"
