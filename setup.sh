@@ -18,15 +18,20 @@ CYAN="\033[36m"
 YELLOW="\033[33m"
 RESET="\033[0m"
 
-# Detect Python — prefer the project venv, fall back to system
-if [[ -x "$SCRIPT_DIR/.venv/bin/python3" ]]; then
-    PYTHON="$SCRIPT_DIR/.venv/bin/python3"
-elif command -v python3 &>/dev/null; then
-    PYTHON="$(command -v python3)"
-else
-    echo "ERROR: Python 3 not found. Install Python 3.12+ or run 'uv sync' first."
-    exit 1
-fi
+resolve_python() {
+    if [[ -x "$SCRIPT_DIR/.venv/bin/python3" ]]; then
+        PYTHON="$SCRIPT_DIR/.venv/bin/python3"
+    elif command -v python3 &>/dev/null; then
+        PYTHON="$(command -v python3)"
+    else
+        echo "ERROR: Python 3 not found. Install Python 3.12+ or run 'uv sync' first."
+        exit 1
+    fi
+}
+
+resolve_python
+
+GUI_DOMAIN="gui/$(id -u)"
 
 get_lan_ip() {
     local ip
@@ -185,8 +190,9 @@ do_setup() {
             python3 -m venv "$SCRIPT_DIR/.venv"
             "$SCRIPT_DIR/.venv/bin/pip" install --quiet -e "$SCRIPT_DIR"
         fi
-        PYTHON="$SCRIPT_DIR/.venv/bin/python3"
     fi
+    # Re-resolve so PYTHON always points to the venv
+    resolve_python
 
     cat > "$PLIST_DEST" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -234,18 +240,20 @@ PLIST
 
     echo "Plist generated at $PLIST_DEST"
 
-    if launchctl list | grep -q "$SERVICE_LABEL"; then
-        launchctl unload "$PLIST_DEST" 2>/dev/null || true
-    fi
+    # Remove existing service if loaded
+    launchctl bootout "$GUI_DOMAIN/$SERVICE_LABEL" 2>/dev/null || true
+    sleep 1
 
-    launchctl load "$PLIST_DEST"
-    echo "Service loaded."
+    # Bootstrap the service
+    launchctl bootstrap "$GUI_DOMAIN" "$PLIST_DEST"
+    echo "Service bootstrapped."
 
     sleep 2
 
-    if launchctl list | grep -q "$SERVICE_LABEL"; then
-        PID=$(launchctl list | awk -v label="$SERVICE_LABEL" '$3 == label {print $1}')
-        if [[ "$PID" != "-" && -n "$PID" ]]; then
+    # Verify
+    if launchctl print "$GUI_DOMAIN/$SERVICE_LABEL" &>/dev/null; then
+        PID=$(launchctl print "$GUI_DOMAIN/$SERVICE_LABEL" 2>/dev/null | awk '/pid =/ {print $3}')
+        if [[ -n "$PID" && "$PID" != "0" ]]; then
             echo -e "${GREEN}Service started successfully${RESET} (PID $PID)."
         else
             echo "Service loaded but not yet running. Check logs:"
@@ -253,7 +261,7 @@ PLIST
             echo "  tail -f ~/Library/Logs/imessage-bridge.err"
         fi
     else
-        echo "WARNING: Service does not appear in launchctl list. Check logs:"
+        echo "WARNING: Service failed to bootstrap. Check logs:"
         echo "  tail -f ~/Library/Logs/imessage-bridge.err"
         exit 1
     fi
