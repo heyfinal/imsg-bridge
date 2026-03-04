@@ -234,7 +234,7 @@ Logs are written to `~/Library/Logs/imessage-bridge.log` and `~/Library/Logs/ime
 By default, the LaunchAgent binds to `127.0.0.1` (loopback only). If you want to access the bridge from other machines on your LAN (e.g. `imsg-gtk` on Linux), bind to `0.0.0.0` instead:
 
 ```bash
-IMSG_BIND_HOST=0.0.0.0 ./setup.sh
+IMSG_BRIDGE_BIND_HOST=0.0.0.0 ./setup.sh
 ```
 
 This exposes the bridge to your local network. Keep the bearer token private and consider using a firewall, Tailscale, or SSH tunneling.

@@ -19,6 +19,13 @@ CYAN="\033[36m"
 YELLOW="\033[33m"
 RESET="\033[0m"
 
+if [[ -n "${IMSG_BIND_HOST:-}" && -z "${IMSG_BRIDGE_BIND_HOST:-}" ]]; then
+    echo -e "${YELLOW}NOTE:${RESET} IMSG_BIND_HOST is deprecated; use IMSG_BRIDGE_BIND_HOST instead."
+fi
+if [[ -n "${IMSG_BIND_PORT:-}" && -z "${IMSG_BRIDGE_BIND_PORT:-}" ]]; then
+    echo -e "${YELLOW}NOTE:${RESET} IMSG_BIND_PORT is deprecated; use IMSG_BRIDGE_BIND_PORT instead."
+fi
+
 build_ai_task_prompt() {
     local repo_url="https://github.com/heyfinal/imsg-bridge.git"
     local install_dir="${IMSG_BRIDGE_DIR:-$HOME/.imsg-bridge}"
@@ -543,7 +550,7 @@ do_deploy_usb() {
         echo "WARNING: Bridge is configured to bind to 127.0.0.1."
         echo "The Linux client will not be able to reach it over the network."
         echo "Re-run with LAN binding, then re-deploy:"
-        echo "  IMSG_BIND_HOST=0.0.0.0 ./setup.sh"
+        echo "  IMSG_BRIDGE_BIND_HOST=0.0.0.0 ./setup.sh"
         echo ""
     fi
 
@@ -578,7 +585,7 @@ do_deploy_ssh() {
         echo "WARNING: Bridge is configured to bind to 127.0.0.1."
         echo "The Linux client will not be able to reach it over the network."
         echo "Re-run with LAN binding, then re-deploy:"
-        echo "  IMSG_BIND_HOST=0.0.0.0 ./setup.sh"
+        echo "  IMSG_BRIDGE_BIND_HOST=0.0.0.0 ./setup.sh"
         echo ""
     fi
 

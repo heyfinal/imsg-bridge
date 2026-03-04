@@ -302,10 +302,10 @@ async def verify_token(request: Request) -> None:
     try:
         expected_token = get_bearer_token()
     except RuntimeError as exc:
-        logger.error("%s", exc)
+        logger.error("Bearer token unavailable: %s", exc)
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Server is not configured (missing bearer token). Run setup.sh.",
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Service unavailable",
         )
 
     auth = request.headers.get("Authorization", "")
@@ -568,7 +568,11 @@ manager = SubprocessManager()
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     # Fail fast (and with a clear log message) if the server isn't configured.
-    get_bearer_token()
+    try:
+        get_bearer_token()
+    except RuntimeError as exc:
+        logger.error("Bridge startup failed: bearer token unavailable: %s", exc)
+        raise
 
     loop = asyncio.get_event_loop()
     try:
@@ -664,7 +668,7 @@ async def websocket_endpoint(
     try:
         expected_token = get_bearer_token()
     except RuntimeError:
-        await ws.close(code=status.WS_1011_INTERNAL_ERROR, reason="Server token unavailable")
+        await ws.close(code=status.WS_1011_INTERNAL_ERROR, reason="Service unavailable")
         return
 
     auth_header = ws.headers.get("Authorization", "")
