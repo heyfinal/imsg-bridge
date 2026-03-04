@@ -39,6 +39,15 @@ logger = logging.getLogger("imessage-bridge")
 
 IMSG = os.getenv("IMSG_PATH") or shutil.which("imsg") or "/opt/homebrew/bin/imsg"
 STATE_DIR = Path.home() / ".imessage-bridge"
+
+ALLOWED_ATTACHMENT_DIRS: list[Path] = [
+    Path.home() / "Downloads",
+    Path.home() / "Pictures",
+    Path.home() / "Desktop",
+]
+_env_attach_dirs = os.getenv("IMSG_ATTACHMENT_DIRS", "").strip()
+if _env_attach_dirs:
+    ALLOWED_ATTACHMENT_DIRS = [Path(p) for p in _env_attach_dirs.split(":") if p.strip()]
 STATE_FILE = STATE_DIR / "state.json"
 ADDRESSBOOK_DB = Path.home() / "Library" / "Application Support" / "AddressBook" / "AddressBook-v22.abcddb"
 ADDRESSBOOK_EXTERNAL_DATA = (
@@ -185,23 +194,22 @@ def _format_display_name(first: str | None, last: str | None, org: str | None) -
     return ""
 
 
-def _contact_avatar_index() -> dict[str, bytes]:
+def _ensure_contact_cache() -> None:
     global _avatar_cache, _avatar_cache_time, _name_cache, _name_cache_time
     now = time.monotonic()
-    if now - _avatar_cache_time > _AVATAR_TTL:
+    if now - _avatar_cache_time > _AVATAR_TTL or now - _name_cache_time > _NAME_TTL:
         _avatar_cache, _name_cache = _build_contact_index()
         _avatar_cache_time = now
         _name_cache_time = now
+
+
+def _contact_avatar_index() -> dict[str, bytes]:
+    _ensure_contact_cache()
     return _avatar_cache
 
 
 def _contact_name_index() -> dict[str, str]:
-    global _avatar_cache, _avatar_cache_time, _name_cache, _name_cache_time
-    now = time.monotonic()
-    if now - _name_cache_time > _NAME_TTL:
-        _avatar_cache, _name_cache = _build_contact_index()
-        _avatar_cache_time = now
-        _name_cache_time = now
+    _ensure_contact_cache()
     return _name_cache
 
 
@@ -347,6 +355,22 @@ class SendRequest(BaseModel):
     file: str | None = None
 
 
+def _validate_attachment_path(file_path: str) -> Path:
+    resolved = Path(file_path).resolve()
+    if not resolved.is_file():
+        raise HTTPException(status_code=400, detail="Attachment file does not exist")
+    for allowed in ALLOWED_ATTACHMENT_DIRS:
+        try:
+            resolved.relative_to(allowed.resolve())
+            return resolved
+        except ValueError:
+            continue
+    raise HTTPException(
+        status_code=403,
+        detail=f"Attachment path not in allowed directories: {[str(d) for d in ALLOWED_ATTACHMENT_DIRS]}",
+    )
+
+
 # --- State Persistence ---
 
 def load_state() -> dict:
@@ -449,7 +473,7 @@ class SubprocessManager:
 
     async def _broadcast(self, data: str) -> None:
         dead: list[WebSocket] = []
-        for ws in self._clients:
+        for ws in list(self._clients):
             try:
                 await ws.send_text(data)
             except Exception:
@@ -598,7 +622,8 @@ async def ping() -> JSONResponse:
 async def send_message(req: SendRequest) -> JSONResponse:
     args = ["send", "--to", req.to, "--text", req.text, "--json"]
     if req.file:
-        args.extend(["--file", req.file])
+        validated = _validate_attachment_path(req.file)
+        args.extend(["--file", str(validated)])
     result = await run_imsg(*args)
     return JSONResponse(content=result)
 
@@ -674,6 +699,9 @@ async def websocket_endpoint(
     auth_header = ws.headers.get("Authorization", "")
     header_token = auth_header[7:] if auth_header.startswith("Bearer ") else None
     effective_token = header_token or token
+
+    if header_token is None and token is not None:
+        logger.warning("WebSocket auth via query parameter is deprecated; use Authorization header instead")
 
     if not effective_token or not hmac.compare_digest(effective_token, expected_token):
         await ws.close(code=status.WS_1008_POLICY_VIOLATION, reason="Unauthorized")

@@ -278,3 +278,59 @@ def test_avatar_cache_ttl(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(bridge, "_avatar_cache_time", time.monotonic() - 400)
     bridge._contact_avatar_index()
     assert call_count == 2
+
+
+def test_send_rejects_file_outside_allowed_dirs(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    async def fake_run_imsg(*_args, **_kwargs):
+        return {"status": "sent"}
+
+    monkeypatch.setattr(bridge, "run_imsg", fake_run_imsg)
+    bridge.send_limiter._timestamps.clear()
+
+    response = client.post(
+        "/send",
+        json={"to": "+15551234567", "text": "hi", "file": "/etc/passwd"},
+        headers=AUTH_HEADER,
+    )
+    assert response.status_code in (400, 403)
+
+
+def test_send_accepts_file_in_allowed_dir(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    async def fake_run_imsg(*_args, **_kwargs):
+        return {"status": "sent"}
+
+    monkeypatch.setattr(bridge, "run_imsg", fake_run_imsg)
+    monkeypatch.setattr(bridge, "ALLOWED_ATTACHMENT_DIRS", [tmp_path])
+    bridge.send_limiter._timestamps.clear()
+
+    test_file = tmp_path / "photo.jpg"
+    test_file.write_bytes(b"\xff\xd8\xff")
+
+    response = client.post(
+        "/send",
+        json={"to": "+15551234567", "text": "hi", "file": str(test_file)},
+        headers=AUTH_HEADER,
+    )
+    assert response.status_code == 200
+
+
+def test_send_rejects_nonexistent_file(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    async def fake_run_imsg(*_args, **_kwargs):
+        return {"status": "sent"}
+
+    monkeypatch.setattr(bridge, "run_imsg", fake_run_imsg)
+    monkeypatch.setattr(bridge, "ALLOWED_ATTACHMENT_DIRS", [tmp_path])
+    bridge.send_limiter._timestamps.clear()
+
+    response = client.post(
+        "/send",
+        json={"to": "+15551234567", "text": "hi", "file": str(tmp_path / "nope.jpg")},
+        headers=AUTH_HEADER,
+    )
+    assert response.status_code == 400

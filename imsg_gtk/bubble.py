@@ -54,7 +54,7 @@ class MessageBubble(Gtk.Box):
                     icon = Gtk.Image.new_from_icon_name("text-x-generic-symbolic")
                     chip.append(icon)
                     label = Gtk.Label(label=os.path.basename(path), xalign=0)
-                    label.set_ellipsize(3)
+                    label.set_ellipsize(Pango.EllipsizeMode.END)
                     label.set_max_width_chars(28)
                     chip.append(label)
                     self.append(chip)
@@ -155,4 +155,5 @@ def _load_image_async(picture: Gtk.Picture, path: str):
         texture = Gdk.Texture.new_from_file(file)
         GLib.idle_add(picture.set_paintable, texture)
     except Exception:
-        pass
+        import logging
+        logging.getLogger(__name__).debug("Failed to load image: %s", path, exc_info=True)

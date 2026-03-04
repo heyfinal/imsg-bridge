@@ -1,6 +1,7 @@
 """XDG-compliant config management for imsg-gtk."""
 
 import json
+import os
 from pathlib import Path
 
 DEFAULTS = {
@@ -14,6 +15,7 @@ DEFAULTS = {
 def config_dir() -> Path:
     path = Path.home() / ".config" / "imsg-gtk"
     path.mkdir(parents=True, exist_ok=True)
+    os.chmod(path, 0o700)
     return path
 
 
@@ -39,3 +41,4 @@ def save(data: dict) -> None:
         json.dump(data, f, indent=2)
         f.write("\n")
     tmp.replace(path)
+    os.chmod(path, 0o600)

@@ -3,10 +3,10 @@ import gi
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 
-from gi.repository import Adw, Gtk
+from gi.repository import Adw, GLib, Gtk
 
-from imsg_gtk.chatview import ChatView
 from imsg_gtk import config
+from imsg_gtk.chatview import ChatView
 from imsg_gtk.sidebar import ChatSidebar
 
 
@@ -21,6 +21,7 @@ class ImsgWindow(Adw.ApplicationWindow):
         self._current_chat_id = None
         self._draft_identifier: str | None = None
         self._avatars_by_chat_id: dict[int, bytes] = {}
+        self._chat_reload_source_id = None
 
         self._config = config.load()
         self._pinned_chat_ids: list[int] = [
@@ -204,7 +205,16 @@ class ImsgWindow(Adw.ApplicationWindow):
             if hasattr(self._app, "send_notification_message"):
                 self._app.send_notification_message(display, msg.get("text", ""))
 
+        if self._chat_reload_source_id is not None:
+            GLib.source_remove(self._chat_reload_source_id)
+        self._chat_reload_source_id = GLib.timeout_add(
+            2000, self._debounced_reload
+        )
+
+    def _debounced_reload(self):
+        self._chat_reload_source_id = None
         self._load_chats()
+        return False
 
     def _clear_conversation(self, chat_id):
         if chat_id is None:

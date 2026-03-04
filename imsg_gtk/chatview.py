@@ -6,6 +6,7 @@ gi.require_version("Adw", "1")
 from gi.repository import Adw, Gdk, GLib, Gtk
 
 from imsg_gtk.bubble import MessageBubble
+from imsg_gtk.utils import initials
 
 
 class ChatView(Gtk.Box):
@@ -106,22 +107,11 @@ class ChatView(Gtk.Box):
         self._chat_name = name
         self._title_label.set_label(name or "Messages")
 
-    @staticmethod
-    def _initials(name_or_identifier: str) -> str:
-        text = (name_or_identifier or "").strip()
-        if not text:
-            return "?"
-        cleaned = text.replace("@", " ").replace(".", " ").replace("_", " ")
-        parts = [part for part in cleaned.split() if part]
-        if len(parts) >= 2:
-            return (parts[0][0] + parts[1][0]).upper()
-        return text[:2].upper()
-
     def set_chat_header(self, name: str | None, avatar_bytes: bytes | None = None, subtitle: str | None = None):
         title = name or "Messages"
         self.set_chat_name(title)
         self._subtitle_label.set_label(subtitle or "")
-        self._avatar_initials.set_label(self._initials(title))
+        self._avatar_initials.set_label(initials(title))
 
         if avatar_bytes:
             try:

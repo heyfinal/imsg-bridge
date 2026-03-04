@@ -3,7 +3,9 @@ import gi
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 
-from gi.repository import Adw, Gdk, GLib, Gtk
+from gi.repository import Adw, Gdk, GLib, Gtk, Pango
+
+from imsg_gtk.utils import initials
 
 
 class ChatSidebar(Gtk.Box):
@@ -148,18 +150,6 @@ class ChatSidebar(Gtk.Box):
         self._listbox.unselect_all()
         self.set_selected_chat_id(None)
 
-    @staticmethod
-    def _initials(name_or_identifier: str) -> str:
-        text = (name_or_identifier or "").strip()
-        if not text:
-            return "?"
-
-        cleaned = text.replace("@", " ").replace(".", " ").replace("_", " ")
-        parts = [part for part in cleaned.split() if part]
-        if len(parts) >= 2:
-            return (parts[0][0] + parts[1][0]).upper()
-        return text[:2].upper()
-
     def set_chat_avatar(self, chat_id, image_bytes):
         row = self._rows_by_chat_id.get(chat_id)
         if row is None or not image_bytes:
@@ -185,12 +175,12 @@ class ChatSidebar(Gtk.Box):
         if hasattr(row, "name_label"):
             row.name_label.set_label(name)
         if hasattr(row, "avatar_initials_label"):
-            row.avatar_initials_label.set_label(self._initials(name))
+            row.avatar_initials_label.set_label(initials(name))
         pinned = self._pinned_buttons_by_chat_id.get(chat_id)
         if pinned is not None and hasattr(pinned, "name_label"):
             pinned.name_label.set_label(name)
         if pinned is not None and hasattr(pinned, "avatar_initials_label"):
-            pinned.avatar_initials_label.set_label(self._initials(name))
+            pinned.avatar_initials_label.set_label(initials(name))
 
     def _make_row(self, chat):
         row = Gtk.ListBoxRow()
@@ -212,7 +202,7 @@ class ChatSidebar(Gtk.Box):
         avatar_stack.set_valign(Gtk.Align.CENTER)
         avatar_stack.add_css_class("chat-avatar")
 
-        avatar_initials = Gtk.Label(label=self._initials(row.chat_name))
+        avatar_initials = Gtk.Label(label=initials(row.chat_name))
         avatar_initials.add_css_class("chat-avatar-initials")
         row.avatar_initials_label = avatar_initials
         avatar_image = Gtk.Image()
@@ -229,7 +219,7 @@ class ChatSidebar(Gtk.Box):
         top_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
 
         name_label = Gtk.Label(label=row.chat_name, xalign=0, hexpand=True)
-        name_label.set_ellipsize(3)  # PANGO_ELLIPSIZE_END
+        name_label.set_ellipsize(Pango.EllipsizeMode.END)
         name_label.add_css_class("chat-row-name")
         row.name_label = name_label
         top_row.append(name_label)
@@ -251,7 +241,7 @@ class ChatSidebar(Gtk.Box):
         preview = chat.get("last_message", "")
         if preview:
             preview_label = Gtk.Label(label=preview, xalign=0)
-            preview_label.set_ellipsize(3)
+            preview_label.set_ellipsize(Pango.EllipsizeMode.END)
             preview_label.set_max_width_chars(30)
             preview_label.add_css_class("chat-row-preview")
             box.append(preview_label)
@@ -402,7 +392,7 @@ class ChatSidebar(Gtk.Box):
             avatar_stack.add_css_class("chat-avatar")
             avatar_stack.add_css_class("pinned-avatar")
 
-            avatar_initials = Gtk.Label(label=self._initials(name))
+            avatar_initials = Gtk.Label(label=initials(name))
             avatar_initials.add_css_class("chat-avatar-initials")
             btn.avatar_initials_label = avatar_initials
             avatar_image = Gtk.Image()
@@ -424,7 +414,7 @@ class ChatSidebar(Gtk.Box):
             btn.unread_badge = badge
 
             label = Gtk.Label(label=name, xalign=0.5)
-            label.set_ellipsize(3)
+            label.set_ellipsize(Pango.EllipsizeMode.END)
             label.set_max_width_chars(10)
             label.add_css_class("pinned-label")
             btn.name_label = label

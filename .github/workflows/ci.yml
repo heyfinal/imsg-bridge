@@ -24,7 +24,7 @@ jobs:
 
       - name: Static checks
         run: |
-          python -m compileall -q imsg_bridge imsg_gtk tests
+          python -m compileall -q imsg_bridge tests
           ruff check imsg_bridge imsg_gtk tests
 
       - name: Run tests
