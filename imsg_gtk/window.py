@@ -3,7 +3,7 @@ import gi
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 
-from gi.repository import Adw
+from gi.repository import Adw, Gtk
 
 from imsg_gtk.chatview import ChatView
 from imsg_gtk import config
@@ -19,6 +19,7 @@ class ImsgWindow(Adw.ApplicationWindow):
         self._client = client
         self._chats = {}
         self._current_chat_id = None
+        self._draft_identifier: str | None = None
         self._avatars_by_chat_id: dict[int, bytes] = {}
 
         self._config = config.load()
@@ -28,6 +29,7 @@ class ImsgWindow(Adw.ApplicationWindow):
 
         self._sidebar = ChatSidebar()
         self._sidebar.set_on_chat_selected(self._on_chat_selected)
+        self._sidebar.set_on_compose_requested(self._on_compose_requested)
         self._sidebar.set_on_refresh_requested(self._load_chats)
         self._sidebar.set_on_clear_chat_requested(self._clear_conversation)
         self._sidebar.set_on_clear_all_requested(self._confirm_clear_all_messages)
@@ -79,6 +81,7 @@ class ImsgWindow(Adw.ApplicationWindow):
 
     def _on_chat_selected(self, chat_id):
         self._current_chat_id = chat_id
+        self._draft_identifier = None
         self._sidebar.set_selected_chat_id(chat_id)
         if chat_id is not None:
             self._sidebar.set_chat_unread(chat_id, 0)
@@ -98,10 +101,14 @@ class ImsgWindow(Adw.ApplicationWindow):
         self._bridge.run_coroutine(_fetch())
 
     def _on_send(self, text):
-        if self._current_chat_id is None:
+        identifier = ""
+        if self._current_chat_id is not None:
+            chat = self._chats.get(self._current_chat_id, {})
+            identifier = (chat.get("identifier", "") or "").strip()
+        elif self._draft_identifier:
+            identifier = self._draft_identifier.strip()
+        if not identifier:
             return
-        chat = self._chats.get(self._current_chat_id, {})
-        identifier = chat.get("identifier", "")
 
         bubble = self._chatview.append_message({
             "text": text,
@@ -114,10 +121,54 @@ class ImsgWindow(Adw.ApplicationWindow):
             try:
                 await self._client.send_message(to=identifier, text=text)
                 self._bridge.call_in_gtk(bubble.mark_sent)
+                if self._draft_identifier:
+                    chats = await self._client.get_chats()
+                    self._bridge.call_in_gtk(self._populate_chats_and_select, chats, identifier)
             except Exception:
                 self._bridge.call_in_gtk(self._chatview.mark_last_bubble_failed)
 
         self._bridge.run_coroutine(_do_send())
+
+    def _populate_chats_and_select(self, chats, identifier: str):
+        self._populate_chats(chats)
+        ident = (identifier or "").strip()
+        if not ident:
+            return
+        for chat in chats:
+            if (chat.get("identifier") or "").strip() == ident:
+                self._on_chat_selected(chat.get("id"))
+                return
+
+    def _on_compose_requested(self):
+        dialog = Adw.MessageDialog(
+            heading="New Message",
+            body="Enter a phone number or email address.",
+        )
+        dialog.set_transient_for(self)
+        entry = Gtk.Entry(placeholder_text="+15551234567 or name@example.com")
+        entry.set_activates_default(True)
+        dialog.set_extra_child(entry)
+        dialog.add_response("cancel", "Cancel")
+        dialog.add_response("start", "Start")
+        dialog.set_response_appearance("start", Adw.ResponseAppearance.SUGGESTED)
+        dialog.set_default_response("start")
+        dialog.set_close_response("cancel")
+
+        def _on_resp(d, resp):
+            if resp == "start":
+                ident = entry.get_text().strip()
+                if ident:
+                    self._start_draft_conversation(ident)
+            d.close()
+
+        dialog.connect("response", _on_resp)
+        dialog.present()
+
+    def _start_draft_conversation(self, identifier: str):
+        self._draft_identifier = identifier.strip()
+        self._current_chat_id = None
+        self._sidebar.clear_selection()
+        self._chatview.set_chat(None, identifier, [], None, identifier)
 
     def _start_ws(self):
         async def _connect():

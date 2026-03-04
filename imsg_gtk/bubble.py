@@ -1,3 +1,4 @@
+import os
 import threading
 
 import gi
@@ -39,7 +40,7 @@ class MessageBubble(Gtk.Box):
         if attachments:
             for att in attachments:
                 path = att.get("path") or att.get("file_path") or ""
-                if path and _is_image_path(path):
+                if path and _is_image_path(path) and os.path.exists(path):
                     picture = Gtk.Picture(content_fit=Gtk.ContentFit.CONTAIN)
                     picture.set_size_request(200, -1)
                     picture.add_css_class("attachment-image")
@@ -47,6 +48,16 @@ class MessageBubble(Gtk.Box):
                     threading.Thread(
                         target=_load_image_async, args=(picture, path), daemon=True
                     ).start()
+                elif path:
+                    chip = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+                    chip.add_css_class("attachment-chip")
+                    icon = Gtk.Image.new_from_icon_name("text-x-generic-symbolic")
+                    chip.append(icon)
+                    label = Gtk.Label(label=os.path.basename(path), xalign=0)
+                    label.set_ellipsize(3)
+                    label.set_max_width_chars(28)
+                    chip.append(label)
+                    self.append(chip)
 
         if text:
             text_label = Gtk.Label(label=text, xalign=0, selectable=True)

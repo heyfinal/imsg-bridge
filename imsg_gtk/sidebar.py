@@ -11,6 +11,7 @@ class ChatSidebar(Gtk.Box):
         super().__init__(orientation=Gtk.Orientation.VERTICAL)
 
         self._on_chat_selected = None
+        self._on_compose_requested = None
         self._on_refresh_requested = None
         self._on_clear_chat_requested = None
         self._on_clear_all_requested = None
@@ -26,6 +27,11 @@ class ChatSidebar(Gtk.Box):
 
         header = Adw.HeaderBar()
         header.set_title_widget(Adw.WindowTitle(title="Messages", subtitle=""))
+        compose_btn = Gtk.Button.new_from_icon_name("document-edit-symbolic")
+        compose_btn.set_tooltip_text("New message")
+        compose_btn.add_css_class("flat")
+        compose_btn.connect("clicked", self._on_compose_clicked)
+        header.pack_end(compose_btn)
         self.append(header)
 
         self._search = Gtk.SearchEntry(placeholder_text="Search")
@@ -73,6 +79,9 @@ class ChatSidebar(Gtk.Box):
 
     def set_on_chat_selected(self, callback):
         self._on_chat_selected = callback
+
+    def set_on_compose_requested(self, callback):
+        self._on_compose_requested = callback
 
     def set_on_refresh_requested(self, callback):
         self._on_refresh_requested = callback
@@ -134,6 +143,10 @@ class ChatSidebar(Gtk.Box):
         if row and hasattr(row, "chat_id"):
             return row.chat_id
         return None
+
+    def clear_selection(self):
+        self._listbox.unselect_all()
+        self.set_selected_chat_id(None)
 
     @staticmethod
     def _initials(name_or_identifier: str) -> str:
@@ -268,6 +281,10 @@ class ChatSidebar(Gtk.Box):
     def _on_row_selected(self, listbox, row):
         if row and self._on_chat_selected and hasattr(row, "chat_id"):
             self._on_chat_selected(row.chat_id)
+
+    def _on_compose_clicked(self, button):
+        if self._on_compose_requested:
+            self._on_compose_requested()
 
     def _build_context_popover(self):
         popover = Gtk.Popover()

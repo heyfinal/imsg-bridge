@@ -16,6 +16,7 @@ class ChatView(Gtk.Box):
         self._chat_id = None
         self._chat_name = None
         self._last_bubble = None
+        self._new_messages_pending = False
 
         self._banner = Adw.Banner.new("Reconnecting to iMessage bridge...")
         self._banner.set_revealed(False)
@@ -52,6 +53,8 @@ class ChatView(Gtk.Box):
         self._header.set_title_widget(self._title_widget)
         self.append(self._header)
 
+        self._overlay = Gtk.Overlay(vexpand=True, hexpand=True)
+
         self._scrolled = Gtk.ScrolledWindow(vexpand=True, hexpand=True)
         self._scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
         self._scrolled.add_css_class("message-scroller")
@@ -60,7 +63,23 @@ class ChatView(Gtk.Box):
         self._listbox.set_valign(Gtk.Align.END)
         self._listbox.add_css_class("message-list")
         self._scrolled.set_child(self._listbox)
-        self.append(self._scrolled)
+        self._overlay.set_child(self._scrolled)
+
+        self._new_messages_btn = Gtk.Button(label="New messages")
+        self._new_messages_btn.set_halign(Gtk.Align.CENTER)
+        self._new_messages_btn.set_valign(Gtk.Align.END)
+        self._new_messages_btn.set_margin_bottom(12)
+        self._new_messages_btn.add_css_class("suggested-action")
+        self._new_messages_btn.add_css_class("pill")
+        self._new_messages_btn.add_css_class("new-messages-pill")
+        self._new_messages_btn.set_visible(False)
+        self._new_messages_btn.connect("clicked", self._on_new_messages_clicked)
+        self._overlay.add_overlay(self._new_messages_btn)
+
+        adj = self._scrolled.get_vadjustment()
+        adj.connect("notify::value", self._on_scroll_value_changed)
+
+        self.append(self._overlay)
 
         compose = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         compose.add_css_class("compose-bar")
@@ -142,9 +161,12 @@ class ChatView(Gtk.Box):
                 attachments=msg.get("attachments"),
             )
             self._listbox.append(bubble)
+        self._new_messages_pending = False
+        self._new_messages_btn.set_visible(False)
         self._scroll_to_bottom()
 
     def append_message(self, msg_dict):
+        at_bottom = self._is_at_bottom()
         bubble = MessageBubble(
             text=msg_dict.get("text", ""),
             is_from_me=msg_dict.get("is_from_me", False),
@@ -154,7 +176,13 @@ class ChatView(Gtk.Box):
         )
         self._listbox.append(bubble)
         self._last_bubble = bubble
-        self._scroll_to_bottom()
+        if at_bottom:
+            self._scroll_to_bottom()
+            self._new_messages_pending = False
+            self._new_messages_btn.set_visible(False)
+        else:
+            self._new_messages_pending = True
+            self._new_messages_btn.set_visible(True)
         return bubble
 
     def mark_last_bubble_failed(self):
@@ -172,10 +200,25 @@ class ChatView(Gtk.Box):
     def _scroll_to_bottom(self):
         def _do_scroll():
             adj = self._scrolled.get_vadjustment()
-            adj.set_value(adj.get_upper())
+            target = max(adj.get_upper() - adj.get_page_size(), 0)
+            adj.set_value(target)
             return False
 
         GLib.idle_add(_do_scroll)
+
+    def _is_at_bottom(self) -> bool:
+        adj = self._scrolled.get_vadjustment()
+        return (adj.get_value() + adj.get_page_size()) >= (adj.get_upper() - 24)
+
+    def _on_scroll_value_changed(self, adj, _pspec):
+        if self._new_messages_pending and self._is_at_bottom():
+            self._new_messages_pending = False
+            self._new_messages_btn.set_visible(False)
+
+    def _on_new_messages_clicked(self, button):
+        self._new_messages_pending = False
+        self._new_messages_btn.set_visible(False)
+        self._scroll_to_bottom()
 
     def _send_text(self):
         text = self._entry.get_text().strip()
