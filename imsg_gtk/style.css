@@ -98,6 +98,25 @@
     background-color: alpha(@accent_bg_color, 0.20);
 }
 
+.unread-badge {
+    background-color: @accent_bg_color;
+    color: @accent_fg_color;
+    border-radius: 999px;
+    padding: 2px 8px;
+    margin-left: 6px;
+    font-weight: 700;
+    font-size: 11px;
+}
+
+.pinned-badge {
+    padding: 1px 6px;
+    margin: 2px;
+}
+
+.pinned-selected .pinned-avatar {
+    box-shadow: 0 0 0 2px alpha(@accent_bg_color, 0.60);
+}
+
 .pinned-strip {
     background: transparent;
 }

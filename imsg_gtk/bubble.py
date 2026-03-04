@@ -13,6 +13,8 @@ class MessageBubble(Gtk.Box):
         super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=2)
 
         self._failed = False
+        self._text = text or ""
+        self._sender = sender or ""
 
         if is_from_me:
             self.set_halign(Gtk.Align.END)
@@ -22,6 +24,12 @@ class MessageBubble(Gtk.Box):
             self.set_halign(Gtk.Align.START)
             self.add_css_class("message-bubble")
             self.add_css_class("message-incoming")
+
+        right_click = Gtk.GestureClick()
+        right_click.set_button(Gdk.BUTTON_SECONDARY)
+        right_click.connect("pressed", self._on_right_click)
+        self.add_controller(right_click)
+        self._context_popover = self._build_context_popover()
 
         if not is_from_me and sender:
             sender_label = Gtk.Label(label=sender, xalign=0)
@@ -71,6 +79,58 @@ class MessageBubble(Gtk.Box):
         self._failed = False
         self.remove_css_class("error-bubble")
         self._error_icon.set_visible(False)
+
+    def _build_context_popover(self) -> Gtk.Popover:
+        popover = Gtk.Popover()
+        popover.set_has_arrow(True)
+        popover.set_autohide(True)
+        popover.set_parent(self)
+
+        menu = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        menu.set_margin_top(4)
+        menu.set_margin_bottom(4)
+        menu.set_margin_start(4)
+        menu.set_margin_end(4)
+
+        actions = [
+            ("copy_text", "Copy Text"),
+        ]
+        if self._sender:
+            actions.append(("copy_sender", "Copy Sender"))
+
+        self._menu_buttons = {}
+        for action, label in actions:
+            button = Gtk.Button(label=label, halign=Gtk.Align.FILL, hexpand=True)
+            button.add_css_class("flat")
+            button.connect("clicked", self._on_context_action, action)
+            menu.append(button)
+            self._menu_buttons[action] = button
+
+        popover.set_child(menu)
+        return popover
+
+    def _on_right_click(self, gesture, n_press, x, y):
+        rect = Gdk.Rectangle()
+        rect.x = int(x)
+        rect.y = int(y)
+        rect.width = 1
+        rect.height = 1
+        self._context_popover.set_pointing_to(rect)
+        self._context_popover.popup()
+
+    def _on_context_action(self, button, action):
+        display = Gdk.Display.get_default()
+        clipboard = display.get_clipboard() if display else None
+        if clipboard is None:
+            self._context_popover.popdown()
+            return
+
+        if action == "copy_text":
+            clipboard.set(self._text)
+        elif action == "copy_sender":
+            clipboard.set(self._sender)
+
+        self._context_popover.popdown()
 
 
 def _is_image_path(path: str) -> bool:

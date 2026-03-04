@@ -15,12 +15,14 @@ class ChatSidebar(Gtk.Box):
         self._on_clear_chat_requested = None
         self._on_clear_all_requested = None
         self._on_pin_toggled = None
+        self._selected_chat_id: int | None = None
         self._filter_text = ""
         self._context_row = None
         self._rows_by_chat_id = {}
         self._chats_by_chat_id = {}
         self._pinned_chat_ids: list[int] = []
         self._pinned_buttons_by_chat_id: dict[int, Gtk.Button] = {}
+        self._unread_by_chat_id: dict[int, int] = {}
 
         header = Adw.HeaderBar()
         header.set_title_widget(Adw.WindowTitle(title="Messages", subtitle=""))
@@ -87,6 +89,28 @@ class ChatSidebar(Gtk.Box):
     def set_pinned_chat_ids(self, pinned_chat_ids: list[int]):
         self._pinned_chat_ids = [int(x) for x in pinned_chat_ids if x is not None]
         self._render_pinned()
+
+    def set_selected_chat_id(self, chat_id: int | None):
+        self._selected_chat_id = int(chat_id) if chat_id is not None else None
+        self._render_pinned()
+
+    def set_chat_unread(self, chat_id: int, unread_count: int):
+        chat_id = int(chat_id)
+        unread = max(int(unread_count), 0)
+        if unread:
+            self._unread_by_chat_id[chat_id] = unread
+        else:
+            self._unread_by_chat_id.pop(chat_id, None)
+
+        row = self._rows_by_chat_id.get(chat_id)
+        if row is not None and hasattr(row, "unread_badge"):
+            row.unread_badge.set_visible(unread > 0)
+            row.unread_badge.set_label(str(unread) if unread < 100 else "99+")
+
+        pinned = self._pinned_buttons_by_chat_id.get(chat_id)
+        if pinned is not None and hasattr(pinned, "unread_badge"):
+            pinned.unread_badge.set_visible(unread > 0)
+            pinned.unread_badge.set_label(str(unread) if unread < 100 else "99+")
 
     def set_chats(self, chats_list):
         self._rows_by_chat_id = {}
@@ -197,6 +221,12 @@ class ChatSidebar(Gtk.Box):
         row.name_label = name_label
         top_row.append(name_label)
 
+        unread_badge = Gtk.Label(label="")
+        unread_badge.add_css_class("unread-badge")
+        unread_badge.set_visible(False)
+        row.unread_badge = unread_badge
+        top_row.append(unread_badge)
+
         time_str = chat.get("last_message_at", "")
         if time_str:
             time_label = Gtk.Label(label=time_str)
@@ -215,6 +245,11 @@ class ChatSidebar(Gtk.Box):
 
         row_box.append(box)
         row.set_child(row_box)
+
+        unread = self._unread_by_chat_id.get(int(row.chat_id)) if row.chat_id is not None else 0
+        if unread:
+            unread_badge.set_visible(True)
+            unread_badge.set_label(str(unread) if unread < 100 else "99+")
         return row
 
     def _filter_func(self, row):
@@ -333,10 +368,15 @@ class ChatSidebar(Gtk.Box):
             btn = Gtk.Button()
             btn.set_can_focus(False)
             btn.add_css_class("pinned-button")
+            if self._selected_chat_id is not None and chat_id == self._selected_chat_id:
+                btn.add_css_class("pinned-selected")
             btn.connect("clicked", self._on_pinned_clicked, chat_id)
 
             content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
             content.set_halign(Gtk.Align.CENTER)
+
+            overlay = Gtk.Overlay()
+            overlay.set_size_request(48, 48)
 
             avatar_stack = Gtk.Stack()
             avatar_stack.set_size_request(48, 48)
@@ -356,19 +396,34 @@ class ChatSidebar(Gtk.Box):
             btn.avatar_stack = avatar_stack
             btn.avatar_image = avatar_image
 
+            overlay.set_child(avatar_stack)
+            badge = Gtk.Label(label="")
+            badge.add_css_class("unread-badge")
+            badge.add_css_class("pinned-badge")
+            badge.set_halign(Gtk.Align.END)
+            badge.set_valign(Gtk.Align.START)
+            badge.set_visible(False)
+            overlay.add_overlay(badge)
+            btn.unread_badge = badge
+
             label = Gtk.Label(label=name, xalign=0.5)
             label.set_ellipsize(3)
             label.set_max_width_chars(10)
             label.add_css_class("pinned-label")
             btn.name_label = label
 
-            content.append(avatar_stack)
+            content.append(overlay)
             content.append(label)
             btn.set_child(content)
 
             self._pinned_buttons_by_chat_id[chat_id] = btn
             self._pinned_box.append(btn)
             visible += 1
+
+            unread = self._unread_by_chat_id.get(chat_id, 0)
+            if unread:
+                badge.set_visible(True)
+                badge.set_label(str(unread) if unread < 100 else "99+")
 
         self._pinned_revealer.set_reveal_child(visible > 0)
 

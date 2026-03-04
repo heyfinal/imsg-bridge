@@ -98,9 +98,10 @@ class ChatView(Gtk.Box):
             return (parts[0][0] + parts[1][0]).upper()
         return text[:2].upper()
 
-    def set_chat_header(self, name: str | None, avatar_bytes: bytes | None = None):
+    def set_chat_header(self, name: str | None, avatar_bytes: bytes | None = None, subtitle: str | None = None):
         title = name or "Messages"
         self.set_chat_name(title)
+        self._subtitle_label.set_label(subtitle or "")
         self._avatar_initials.set_label(self._initials(title))
 
         if avatar_bytes:
@@ -127,10 +128,10 @@ class ChatView(Gtk.Box):
             self._banner.set_title("Disconnected from iMessage bridge")
             self._banner.set_revealed(True)
 
-    def set_chat(self, chat_id, chat_name, messages, avatar_bytes=None):
+    def set_chat(self, chat_id, chat_name, messages, avatar_bytes=None, subtitle=None):
         self._chat_id = chat_id
         self._last_bubble = None
-        self.set_chat_header(chat_name, avatar_bytes=avatar_bytes)
+        self.set_chat_header(chat_name, avatar_bytes=avatar_bytes, subtitle=subtitle)
         self.clear()
         for msg in messages:
             bubble = MessageBubble(

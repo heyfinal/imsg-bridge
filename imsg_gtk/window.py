@@ -65,19 +65,35 @@ class ImsgWindow(Adw.ApplicationWindow):
             self._chats[chat["id"]] = chat
         self._sidebar.set_chats(chats)
         self._sidebar.set_pinned_chat_ids(self._pinned_chat_ids)
+        unread = self._config.get("_unread_by_chat_id") or {}
+        for chat in chats:
+            chat_id = chat.get("id")
+            if chat_id is None:
+                continue
+            count = int(unread.get(str(chat_id), 0))
+            if count:
+                self._sidebar.set_chat_unread(chat_id, count)
         for chat in chats:
             self._load_avatar(chat)
             self._load_contact_name(chat)
 
     def _on_chat_selected(self, chat_id):
         self._current_chat_id = chat_id
+        self._sidebar.set_selected_chat_id(chat_id)
+        if chat_id is not None:
+            self._sidebar.set_chat_unread(chat_id, 0)
+            unread = self._config.get("_unread_by_chat_id") or {}
+            unread.pop(str(chat_id), None)
+            self._config["_unread_by_chat_id"] = unread
+            config.save(self._config)
         chat = self._chats.get(chat_id, {})
         chat_name = chat.get("display_name") or chat.get("name") or chat.get("identifier", "")
+        subtitle = chat.get("identifier", "")
         avatar = self._avatars_by_chat_id.get(int(chat_id)) if chat_id is not None else None
 
         async def _fetch():
             messages = await self._client.get_history(chat_id)
-            self._bridge.call_in_gtk(self._chatview.set_chat, chat_id, chat_name, messages, avatar)
+            self._bridge.call_in_gtk(self._chatview.set_chat, chat_id, chat_name, messages, avatar, subtitle)
 
         self._bridge.run_coroutine(_fetch())
 
@@ -87,7 +103,7 @@ class ImsgWindow(Adw.ApplicationWindow):
         chat = self._chats.get(self._current_chat_id, {})
         identifier = chat.get("identifier", "")
 
-        self._chatview.append_message({
+        bubble = self._chatview.append_message({
             "text": text,
             "is_from_me": True,
             "created_at": "",
@@ -97,6 +113,7 @@ class ImsgWindow(Adw.ApplicationWindow):
         async def _do_send():
             try:
                 await self._client.send_message(to=identifier, text=text)
+                self._bridge.call_in_gtk(bubble.mark_sent)
             except Exception:
                 self._bridge.call_in_gtk(self._chatview.mark_last_bubble_failed)
 
@@ -118,6 +135,16 @@ class ImsgWindow(Adw.ApplicationWindow):
         chat_id = msg.get("chat_id")
         if chat_id == self._current_chat_id:
             self._chatview.append_message(msg)
+            if chat_id is not None:
+                self._sidebar.set_chat_unread(chat_id, 0)
+        elif chat_id is not None and not msg.get("is_from_me", False):
+            unread = self._config.get("_unread_by_chat_id") or {}
+            new_count = int(unread.get(str(chat_id), 0)) + 1
+            unread[str(chat_id)] = new_count
+            self._config["_unread_by_chat_id"] = unread
+            config.save(self._config)
+            self._sidebar.set_chat_unread(chat_id, new_count)
+            self._sidebar.set_selected_chat_id(self._current_chat_id)
 
         if not msg.get("is_from_me", False):
             sender = msg.get("sender") or ""
@@ -187,7 +214,8 @@ class ImsgWindow(Adw.ApplicationWindow):
         if chat_id == self._current_chat_id:
             chat = self._chats.get(chat_id, {})
             chat_name = chat.get("display_name") or chat.get("name") or chat.get("identifier", "")
-            self._chatview.set_chat_header(chat_name, avatar_bytes=avatar)
+            subtitle = chat.get("identifier", "")
+            self._chatview.set_chat_header(chat_name, avatar_bytes=avatar, subtitle=subtitle)
 
     def _load_contact_name(self, chat):
         identifier = (chat.get("identifier") or "").strip()
