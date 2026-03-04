@@ -7,6 +7,7 @@ DEFAULTS = {
     "host": "127.0.0.1",
     "port": 5100,
     "token": "",
+    "pinned_chat_ids": [],
 }
 
 

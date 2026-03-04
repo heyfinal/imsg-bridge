@@ -14,9 +14,13 @@ class ChatSidebar(Gtk.Box):
         self._on_refresh_requested = None
         self._on_clear_chat_requested = None
         self._on_clear_all_requested = None
+        self._on_pin_toggled = None
         self._filter_text = ""
         self._context_row = None
         self._rows_by_chat_id = {}
+        self._chats_by_chat_id = {}
+        self._pinned_chat_ids: list[int] = []
+        self._pinned_buttons_by_chat_id: dict[int, Gtk.Button] = {}
 
         header = Adw.HeaderBar()
         header.set_title_widget(Adw.WindowTitle(title="Messages", subtitle=""))
@@ -28,6 +32,25 @@ class ChatSidebar(Gtk.Box):
         self._search.set_margin_bottom(4)
         self._search.connect("search-changed", self._on_search_changed)
         self.append(self._search)
+
+        self._pinned_revealer = Gtk.Revealer()
+        self._pinned_revealer.set_transition_type(Gtk.RevealerTransitionType.SLIDE_DOWN)
+        self._pinned_revealer.set_reveal_child(False)
+
+        pinned_scrolled = Gtk.ScrolledWindow()
+        pinned_scrolled.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.NEVER)
+        pinned_scrolled.set_overlay_scrolling(True)
+        pinned_scrolled.set_margin_start(8)
+        pinned_scrolled.set_margin_end(8)
+        pinned_scrolled.set_margin_bottom(6)
+        pinned_scrolled.add_css_class("pinned-strip")
+
+        self._pinned_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        self._pinned_box.set_margin_top(6)
+        self._pinned_box.set_margin_bottom(6)
+        pinned_scrolled.set_child(self._pinned_box)
+        self._pinned_revealer.set_child(pinned_scrolled)
+        self.append(self._pinned_revealer)
 
         scrolled = Gtk.ScrolledWindow(vexpand=True)
         scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
@@ -58,8 +81,16 @@ class ChatSidebar(Gtk.Box):
     def set_on_clear_all_requested(self, callback):
         self._on_clear_all_requested = callback
 
+    def set_on_pin_toggled(self, callback):
+        self._on_pin_toggled = callback
+
+    def set_pinned_chat_ids(self, pinned_chat_ids: list[int]):
+        self._pinned_chat_ids = [int(x) for x in pinned_chat_ids if x is not None]
+        self._render_pinned()
+
     def set_chats(self, chats_list):
         self._rows_by_chat_id = {}
+        self._chats_by_chat_id = {}
         while True:
             row = self._listbox.get_row_at_index(0)
             if row is None:
@@ -67,8 +98,12 @@ class ChatSidebar(Gtk.Box):
             self._listbox.remove(row)
 
         for chat in chats_list:
+            chat_id = chat.get("id")
+            if chat_id is not None:
+                self._chats_by_chat_id[int(chat_id)] = chat
             row = self._make_row(chat)
             self._listbox.append(row)
+        self._render_pinned()
 
     def get_selected_chat_id(self):
         row = self._listbox.get_selected_row()
@@ -100,6 +135,10 @@ class ChatSidebar(Gtk.Box):
 
         row.avatar_image.set_from_paintable(texture)
         row.avatar_stack.set_visible_child_name("image")
+        pinned = self._pinned_buttons_by_chat_id.get(chat_id)
+        if pinned is not None and hasattr(pinned, "avatar_image") and hasattr(pinned, "avatar_stack"):
+            pinned.avatar_image.set_from_paintable(texture)
+            pinned.avatar_stack.set_visible_child_name("image")
 
     def set_chat_display_name(self, chat_id, name):
         row = self._rows_by_chat_id.get(chat_id)
@@ -110,6 +149,11 @@ class ChatSidebar(Gtk.Box):
             row.name_label.set_label(name)
         if hasattr(row, "avatar_initials_label"):
             row.avatar_initials_label.set_label(self._initials(name))
+        pinned = self._pinned_buttons_by_chat_id.get(chat_id)
+        if pinned is not None and hasattr(pinned, "name_label"):
+            pinned.name_label.set_label(name)
+        if pinned is not None and hasattr(pinned, "avatar_initials_label"):
+            pinned.avatar_initials_label.set_label(self._initials(name))
 
     def _make_row(self, chat):
         row = Gtk.ListBoxRow()
@@ -123,6 +167,7 @@ class ChatSidebar(Gtk.Box):
         row_box.set_margin_bottom(8)
         row_box.set_margin_start(12)
         row_box.set_margin_end(12)
+        row.add_css_class("chat-row")
 
         avatar_stack = Gtk.Stack()
         avatar_stack.set_size_request(36, 36)
@@ -175,12 +220,15 @@ class ChatSidebar(Gtk.Box):
     def _filter_func(self, row):
         if not self._filter_text:
             return True
-        name = getattr(row, "chat_name", "")
-        return self._filter_text.lower() in name.lower()
+        needle = self._filter_text.lower().strip()
+        name = (getattr(row, "chat_name", "") or "").lower()
+        ident = (getattr(row, "chat_identifier", "") or "").lower()
+        return needle in name or needle in ident
 
     def _on_search_changed(self, entry):
         self._filter_text = entry.get_text()
         self._listbox.invalidate_filter()
+        self._render_pinned()
 
     def _on_row_selected(self, listbox, row):
         if row and self._on_chat_selected and hasattr(row, "chat_id"):
@@ -201,6 +249,7 @@ class ChatSidebar(Gtk.Box):
         self._menu_buttons = {}
         actions = [
             ("open", "Open Conversation"),
+            ("pin_toggle", "Pin"),
             ("refresh", "Refresh Conversations"),
             ("copy", "Copy Contact"),
             ("clear", "Clear Conversation"),
@@ -224,8 +273,13 @@ class ChatSidebar(Gtk.Box):
 
         has_row = row is not None
         self._menu_buttons["open"].set_sensitive(has_row)
+        self._menu_buttons["pin_toggle"].set_sensitive(has_row)
         self._menu_buttons["copy"].set_sensitive(has_row)
         self._menu_buttons["clear"].set_sensitive(has_row)
+
+        if has_row:
+            pinned = row.chat_id in self._pinned_chat_ids
+            self._menu_buttons["pin_toggle"].set_label("Unpin" if pinned else "Pin")
 
         rect = Gdk.Rectangle()
         rect.x = int(x)
@@ -239,6 +293,8 @@ class ChatSidebar(Gtk.Box):
         row = self._context_row or self._listbox.get_selected_row()
         if action == "open" and row is not None and self._on_chat_selected:
             self._on_chat_selected(row.chat_id)
+        elif action == "pin_toggle" and row is not None and self._on_pin_toggled:
+            self._on_pin_toggled(row.chat_id)
         elif action == "refresh" and self._on_refresh_requested:
             self._on_refresh_requested()
         elif action == "copy" and row is not None:
@@ -251,3 +307,74 @@ class ChatSidebar(Gtk.Box):
             self._on_clear_all_requested()
 
         self._context_popover.popdown()
+
+    def _render_pinned(self):
+        while True:
+            child = self._pinned_box.get_first_child()
+            if child is None:
+                break
+            self._pinned_box.remove(child)
+        self._pinned_buttons_by_chat_id = {}
+
+        needle = (self._filter_text or "").lower().strip()
+        visible = 0
+
+        for chat_id in self._pinned_chat_ids:
+            chat = self._chats_by_chat_id.get(chat_id)
+            if not chat:
+                continue
+
+            name = chat.get("display_name") or chat.get("name") or chat.get("identifier", "")
+            identifier = chat.get("identifier", "")
+            haystack = f"{name} {identifier}".lower()
+            if needle and needle not in haystack:
+                continue
+
+            btn = Gtk.Button()
+            btn.set_can_focus(False)
+            btn.add_css_class("pinned-button")
+            btn.connect("clicked", self._on_pinned_clicked, chat_id)
+
+            content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+            content.set_halign(Gtk.Align.CENTER)
+
+            avatar_stack = Gtk.Stack()
+            avatar_stack.set_size_request(48, 48)
+            avatar_stack.set_halign(Gtk.Align.CENTER)
+            avatar_stack.set_valign(Gtk.Align.CENTER)
+            avatar_stack.add_css_class("chat-avatar")
+            avatar_stack.add_css_class("pinned-avatar")
+
+            avatar_initials = Gtk.Label(label=self._initials(name))
+            avatar_initials.add_css_class("chat-avatar-initials")
+            btn.avatar_initials_label = avatar_initials
+            avatar_image = Gtk.Image()
+
+            avatar_stack.add_named(avatar_initials, "fallback")
+            avatar_stack.add_named(avatar_image, "image")
+            avatar_stack.set_visible_child_name("fallback")
+            btn.avatar_stack = avatar_stack
+            btn.avatar_image = avatar_image
+
+            label = Gtk.Label(label=name, xalign=0.5)
+            label.set_ellipsize(3)
+            label.set_max_width_chars(10)
+            label.add_css_class("pinned-label")
+            btn.name_label = label
+
+            content.append(avatar_stack)
+            content.append(label)
+            btn.set_child(content)
+
+            self._pinned_buttons_by_chat_id[chat_id] = btn
+            self._pinned_box.append(btn)
+            visible += 1
+
+        self._pinned_revealer.set_reveal_child(visible > 0)
+
+    def _on_pinned_clicked(self, button, chat_id):
+        row = self._rows_by_chat_id.get(chat_id)
+        if row is not None:
+            self._listbox.select_row(row)
+        if self._on_chat_selected:
+            self._on_chat_selected(chat_id)

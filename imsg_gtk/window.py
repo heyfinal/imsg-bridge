@@ -6,6 +6,7 @@ gi.require_version("Adw", "1")
 from gi.repository import Adw
 
 from imsg_gtk.chatview import ChatView
+from imsg_gtk import config
 from imsg_gtk.sidebar import ChatSidebar
 
 
@@ -18,12 +19,20 @@ class ImsgWindow(Adw.ApplicationWindow):
         self._client = client
         self._chats = {}
         self._current_chat_id = None
+        self._avatars_by_chat_id: dict[int, bytes] = {}
+
+        self._config = config.load()
+        self._pinned_chat_ids: list[int] = [
+            int(x) for x in (self._config.get("pinned_chat_ids") or []) if x is not None
+        ]
 
         self._sidebar = ChatSidebar()
         self._sidebar.set_on_chat_selected(self._on_chat_selected)
         self._sidebar.set_on_refresh_requested(self._load_chats)
         self._sidebar.set_on_clear_chat_requested(self._clear_conversation)
         self._sidebar.set_on_clear_all_requested(self._confirm_clear_all_messages)
+        self._sidebar.set_on_pin_toggled(self._toggle_pin)
+        self._sidebar.set_pinned_chat_ids(self._pinned_chat_ids)
         self._sidebar.set_size_request(280, -1)
 
         self._chatview = ChatView()
@@ -55,6 +64,7 @@ class ImsgWindow(Adw.ApplicationWindow):
         for chat in chats:
             self._chats[chat["id"]] = chat
         self._sidebar.set_chats(chats)
+        self._sidebar.set_pinned_chat_ids(self._pinned_chat_ids)
         for chat in chats:
             self._load_avatar(chat)
             self._load_contact_name(chat)
@@ -63,10 +73,11 @@ class ImsgWindow(Adw.ApplicationWindow):
         self._current_chat_id = chat_id
         chat = self._chats.get(chat_id, {})
         chat_name = chat.get("display_name") or chat.get("name") or chat.get("identifier", "")
+        avatar = self._avatars_by_chat_id.get(int(chat_id)) if chat_id is not None else None
 
         async def _fetch():
             messages = await self._client.get_history(chat_id)
-            self._bridge.call_in_gtk(self._chatview.set_chat, chat_id, chat_name, messages)
+            self._bridge.call_in_gtk(self._chatview.set_chat, chat_id, chat_name, messages, avatar)
 
         self._bridge.run_coroutine(_fetch())
 
@@ -165,9 +176,18 @@ class ImsgWindow(Adw.ApplicationWindow):
             except Exception:
                 return
             if avatar:
-                self._bridge.call_in_gtk(self._sidebar.set_chat_avatar, chat_id, avatar)
+                self._bridge.call_in_gtk(self._apply_avatar, chat_id, avatar)
 
         self._bridge.run_coroutine(_fetch())
+
+    def _apply_avatar(self, chat_id, avatar):
+        if chat_id is not None and avatar:
+            self._avatars_by_chat_id[int(chat_id)] = avatar
+        self._sidebar.set_chat_avatar(chat_id, avatar)
+        if chat_id == self._current_chat_id:
+            chat = self._chats.get(chat_id, {})
+            chat_name = chat.get("display_name") or chat.get("name") or chat.get("identifier", "")
+            self._chatview.set_chat_header(chat_name, avatar_bytes=avatar)
 
     def _load_contact_name(self, chat):
         identifier = (chat.get("identifier") or "").strip()
@@ -192,3 +212,16 @@ class ImsgWindow(Adw.ApplicationWindow):
         if chat:
             chat["display_name"] = name
             self._sidebar.set_chat_display_name(chat_id, name)
+
+    def _toggle_pin(self, chat_id):
+        if chat_id is None:
+            return
+        chat_id = int(chat_id)
+        if chat_id in self._pinned_chat_ids:
+            self._pinned_chat_ids = [x for x in self._pinned_chat_ids if x != chat_id]
+        else:
+            self._pinned_chat_ids = [chat_id] + [x for x in self._pinned_chat_ids if x != chat_id]
+
+        self._config["pinned_chat_ids"] = list(self._pinned_chat_ids)
+        config.save(self._config)
+        self._sidebar.set_pinned_chat_ids(self._pinned_chat_ids)

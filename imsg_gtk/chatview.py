@@ -3,7 +3,7 @@ import gi
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 
-from gi.repository import Adw, GLib, Gtk
+from gi.repository import Adw, Gdk, GLib, Gtk
 
 from imsg_gtk.bubble import MessageBubble
 
@@ -22,15 +22,43 @@ class ChatView(Gtk.Box):
         self.append(self._banner)
 
         self._header = Adw.HeaderBar()
-        self._title = Adw.WindowTitle(title="Messages", subtitle="")
-        self._header.set_title_widget(self._title)
+        self._title_widget = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        self._title_widget.set_halign(Gtk.Align.CENTER)
+
+        self._avatar_stack = Gtk.Stack()
+        self._avatar_stack.set_size_request(32, 32)
+        self._avatar_stack.set_halign(Gtk.Align.CENTER)
+        self._avatar_stack.set_valign(Gtk.Align.CENTER)
+        self._avatar_stack.add_css_class("chat-avatar")
+        self._avatar_stack.add_css_class("header-avatar")
+
+        self._avatar_initials = Gtk.Label(label="?")
+        self._avatar_initials.add_css_class("chat-avatar-initials")
+        self._avatar_image = Gtk.Image()
+        self._avatar_stack.add_named(self._avatar_initials, "fallback")
+        self._avatar_stack.add_named(self._avatar_image, "image")
+        self._avatar_stack.set_visible_child_name("fallback")
+
+        title_labels = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        self._title_label = Gtk.Label(label="Messages", xalign=0.0)
+        self._title_label.add_css_class("header-name")
+        self._subtitle_label = Gtk.Label(label="", xalign=0.0)
+        self._subtitle_label.add_css_class("header-subtitle")
+        title_labels.append(self._title_label)
+        title_labels.append(self._subtitle_label)
+
+        self._title_widget.append(self._avatar_stack)
+        self._title_widget.append(title_labels)
+        self._header.set_title_widget(self._title_widget)
         self.append(self._header)
 
         self._scrolled = Gtk.ScrolledWindow(vexpand=True, hexpand=True)
         self._scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        self._scrolled.add_css_class("message-scroller")
 
         self._listbox = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE)
         self._listbox.set_valign(Gtk.Align.END)
+        self._listbox.add_css_class("message-list")
         self._scrolled.set_child(self._listbox)
         self.append(self._scrolled)
 
@@ -42,8 +70,11 @@ class ChatView(Gtk.Box):
         self._entry.connect("activate", self._on_entry_activate)
         compose.append(self._entry)
 
-        send_btn = Gtk.Button(label="Send")
+        send_btn = Gtk.Button.new_from_icon_name("mail-send-symbolic")
+        send_btn.set_tooltip_text("Send")
         send_btn.add_css_class("suggested-action")
+        send_btn.add_css_class("circular")
+        send_btn.add_css_class("send-button")
         send_btn.connect("clicked", self._on_send_clicked)
         compose.append(send_btn)
 
@@ -54,7 +85,34 @@ class ChatView(Gtk.Box):
 
     def set_chat_name(self, name):
         self._chat_name = name
-        self._title.set_title(name or "Messages")
+        self._title_label.set_label(name or "Messages")
+
+    @staticmethod
+    def _initials(name_or_identifier: str) -> str:
+        text = (name_or_identifier or "").strip()
+        if not text:
+            return "?"
+        cleaned = text.replace("@", " ").replace(".", " ").replace("_", " ")
+        parts = [part for part in cleaned.split() if part]
+        if len(parts) >= 2:
+            return (parts[0][0] + parts[1][0]).upper()
+        return text[:2].upper()
+
+    def set_chat_header(self, name: str | None, avatar_bytes: bytes | None = None):
+        title = name or "Messages"
+        self.set_chat_name(title)
+        self._avatar_initials.set_label(self._initials(title))
+
+        if avatar_bytes:
+            try:
+                texture = Gdk.Texture.new_from_bytes(GLib.Bytes.new(avatar_bytes))
+            except Exception:
+                self._avatar_stack.set_visible_child_name("fallback")
+            else:
+                self._avatar_image.set_from_paintable(texture)
+                self._avatar_stack.set_visible_child_name("image")
+        else:
+            self._avatar_stack.set_visible_child_name("fallback")
 
     def set_connection_status(self, status):
         if status == "connected":
@@ -69,10 +127,10 @@ class ChatView(Gtk.Box):
             self._banner.set_title("Disconnected from iMessage bridge")
             self._banner.set_revealed(True)
 
-    def set_chat(self, chat_id, chat_name, messages):
+    def set_chat(self, chat_id, chat_name, messages, avatar_bytes=None):
         self._chat_id = chat_id
         self._last_bubble = None
-        self.set_chat_name(chat_name)
+        self.set_chat_header(chat_name, avatar_bytes=avatar_bytes)
         self.clear()
         for msg in messages:
             bubble = MessageBubble(
