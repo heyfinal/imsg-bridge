@@ -229,6 +229,16 @@ This will:
 
 Logs are written to `~/Library/Logs/imessage-bridge.log` and `~/Library/Logs/imessage-bridge.err`.
 
+#### LAN access (optional)
+
+By default, the LaunchAgent binds to `127.0.0.1` (loopback only). If you want to access the bridge from other machines on your LAN (e.g. `imsg-gtk` on Linux), bind to `0.0.0.0` instead:
+
+```bash
+IMSG_BIND_HOST=0.0.0.0 ./setup.sh
+```
+
+This exposes the bridge to your local network. Keep the bearer token private and consider using a firewall, Tailscale, or SSH tunneling.
+
 ### Manual
 
 ```bash
@@ -310,7 +320,7 @@ Configuration is stored in `~/.config/imsg-gtk/config.json`:
 ## Security
 
 - Setup supports both bind modes:
-  - `127.0.0.1` local-only
+  - `127.0.0.1` local-only (recommended default)
   - `0.0.0.0` LAN-accessible (required for direct Linux client access)
 - Bearer token required on all endpoints (REST and WebSocket) except `/ping`
 - Token stored in macOS Keychain, never on disk

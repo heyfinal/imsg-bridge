@@ -28,7 +28,7 @@ from fastapi import (
     status,
 )
 from fastapi.responses import JSONResponse, Response
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 logging.basicConfig(
     level=logging.INFO,
@@ -256,6 +256,10 @@ def _avatar_media_type(image_bytes: bytes) -> str:
 # --- Auth ---
 
 def _load_bearer_token() -> str:
+    env_token = os.environ.get("IMSG_BRIDGE_TOKEN", "").strip()
+    if env_token:
+        return env_token
+
     result = subprocess.run(
         ["security", "find-generic-password", "-a", getpass.getuser(), "-s", "imessage-bridge", "-w"],
         capture_output=True,
@@ -263,16 +267,14 @@ def _load_bearer_token() -> str:
     )
     token = result.stdout.strip()
     if result.returncode != 0 or not token:
-        raise RuntimeError("Failed to load bearer token from Keychain")
+        raise RuntimeError(
+            "Bearer token not found in Keychain. Run ./setup.sh to generate and store it."
+        )
     return token
 
 
 @lru_cache(maxsize=1)
 def get_bearer_token() -> str:
-    # Allow explicit override for testing and containerized runs.
-    token = os.getenv("IMSG_BRIDGE_TOKEN", "").strip()
-    if token:
-        return token
     return _load_bearer_token()
 
 
@@ -301,7 +303,10 @@ async def verify_token(request: Request) -> None:
         expected_token = get_bearer_token()
     except RuntimeError as exc:
         logger.error("%s", exc)
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Server token unavailable")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Server is not configured (missing bearer token). Run setup.sh.",
+        )
 
     auth = request.headers.get("Authorization", "")
     if not auth.startswith("Bearer "):
@@ -332,8 +337,8 @@ class Message(BaseModel):
     destination_caller_id: str | None = None
     is_from_me: bool = False
     created_at: str = ""
-    attachments: list[Any] = []
-    reactions: list[Any] = []
+    attachments: list[Any] = Field(default_factory=list)
+    reactions: list[Any] = Field(default_factory=list)
 
 
 class SendRequest(BaseModel):
@@ -562,6 +567,9 @@ manager = SubprocessManager()
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
+    # Fail fast (and with a clear log message) if the server isn't configured.
+    get_bearer_token()
+
     loop = asyncio.get_event_loop()
     try:
         loop.add_signal_handler(signal.SIGTERM, lambda: asyncio.create_task(manager.stop()))

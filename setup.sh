@@ -8,9 +8,9 @@ BRIDGE_DIR="$HOME/.imessage-bridge"
 LOG_DIR="$HOME/Library/Logs"
 SERVICE_LABEL="com.imsg-bridge"
 CURRENT_USER="$(whoami)"
-BIND_HOST="${IMSG_BIND_HOST:-0.0.0.0}"
-BIND_PORT="${IMSG_BIND_PORT:-5100}"
-IMSG_BIN="/opt/homebrew/bin/imsg"
+BIND_HOST="${IMSG_BRIDGE_BIND_HOST:-${IMSG_BIND_HOST:-127.0.0.1}}"
+BIND_PORT="${IMSG_BRIDGE_BIND_PORT:-${IMSG_BIND_PORT:-5100}}"
+IMSG_BIN="${IMSG_BIN:-/opt/homebrew/bin/imsg}"
 
 BOLD="\033[1m"
 DIM="\033[2m"
@@ -538,6 +538,14 @@ do_deploy_usb() {
         echo "ERROR: Could not detect LAN IP. Are you connected to a network?"
         exit 1
     fi
+    if [[ "$BIND_HOST" == "127.0.0.1" ]]; then
+        echo ""
+        echo "WARNING: Bridge is configured to bind to 127.0.0.1."
+        echo "The Linux client will not be able to reach it over the network."
+        echo "Re-run with LAN binding, then re-deploy:"
+        echo "  IMSG_BIND_HOST=0.0.0.0 ./setup.sh"
+        echo ""
+    fi
 
     pkg_dir=$(deploy_package "$usb_path" "$token" "$lan_ip")
 
@@ -564,6 +572,14 @@ do_deploy_ssh() {
     if [[ -z "$lan_ip" ]]; then
         echo "ERROR: Could not detect LAN IP."
         exit 1
+    fi
+    if [[ "$BIND_HOST" == "127.0.0.1" ]]; then
+        echo ""
+        echo "WARNING: Bridge is configured to bind to 127.0.0.1."
+        echo "The Linux client will not be able to reach it over the network."
+        echo "Re-run with LAN binding, then re-deploy:"
+        echo "  IMSG_BIND_HOST=0.0.0.0 ./setup.sh"
+        echo ""
     fi
 
     tmp_dir=$(mktemp -d)
@@ -638,22 +654,22 @@ do_setup() {
     echo -e "  ${BOLD}$TOKEN${RESET}"
     echo ""
 
-    # Ask about LAN binding if not set via env
-    if [[ -z "${IMSG_BIND_HOST:-}" ]]; then
+    # Ask about network binding if not set via env
+    if [[ -z "${IMSG_BIND_HOST:-}" && -z "${IMSG_BRIDGE_BIND_HOST:-}" ]]; then
         echo -e "${BOLD}Network binding:${RESET}"
         echo ""
-        echo -e "  ${BOLD}1)${RESET} LAN accessible  ${DIM}(0.0.0.0 — required for Linux client)${RESET} (Recommended)"
-        echo -e "  ${BOLD}2)${RESET} Localhost only   ${DIM}(127.0.0.1 — local access only)${RESET}"
+        echo -e "  ${BOLD}1)${RESET} LAN accessible  ${DIM}(0.0.0.0 — required for direct Linux client access)${RESET}"
+        echo -e "  ${BOLD}2)${RESET} Localhost only   ${DIM}(127.0.0.1 — local access only)${RESET} (Recommended)"
         echo ""
-        read -rp "Choice [1/2] (default: 1): " bind_choice
+        read -rp "Choice [1/2] (default: 2): " bind_choice
         case "$bind_choice" in
-            2)
-                BIND_HOST="127.0.0.1"
-                echo -e "Binding to ${CYAN}127.0.0.1:${BIND_PORT}${RESET} (localhost only)"
-                ;;
-            *)
+            1)
                 BIND_HOST="0.0.0.0"
                 echo -e "Binding to ${CYAN}0.0.0.0:${BIND_PORT}${RESET} (LAN accessible)"
+                ;;
+            *)
+                BIND_HOST="127.0.0.1"
+                echo -e "Binding to ${CYAN}127.0.0.1:${BIND_PORT}${RESET} (localhost only)"
                 ;;
         esac
         echo ""
